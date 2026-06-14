@@ -280,9 +280,11 @@ and persistent lane refill, a vectorized xoshiro128++×8, an unbiased 32-bit Lem
 bound, and a branchless 13-step categorical decode. It is a *different sampler*
 (not a bit-for-bit replay of the scalar deck), but provably the *same distribution*
 — verified by matching the exact score pmf bin-by-bin to **max deviation 6×10⁻⁵**
-across all 79 bins, plus the exact DP's mean/bust/Flip-7. Net **~1.5× over the
-already-fast scalar simulator** (the floor is the O(13) decode replacing the
-scalar's O(1) deck pop; the win comes from 8-wide amortization). Multithreading
+across all 79 bins, plus the exact DP's mean/bust/Flip-7. Net **~1.8× over the
+already-fast scalar simulator** (13 → 7 ns/rollout); the floor is the O(13)
+categorical decode that replaces the scalar's O(1) deck pop, trimmed with a
+running-remainder trick (one unsigned compare per value instead of two), an
+incrementally-tracked popcount, and deferred horizontal reductions. Multithreading
 across games is the remaining lever (see `PLAN.md`).
 
 ### PMU profiling (`make profile`)
@@ -299,7 +301,7 @@ IPC and per-op cost plus stall sources. On the M4 Pro:
 | dense DPs (numbers, +mods) | 44–215 ns/state | 3.0–4.0 | ~0 | ~0 | **compute** (healthy) |
 | hashed DP (+Second Chance) | 157 ns/state | 1.95 | **31.4** | **10.9** | **TLB** (random hash probes) |
 | MC numbers / +mods | 13–16 ns/roll | 3.6–3.8 | ~0 | ~0 | **compute** (healthy) |
-| MC numbers (NEON ×8) | ~8.5 ns/roll | — | ~0 | ~0 | **~1.5×** vs scalar (8 lockstep lanes) |
+| MC numbers (NEON ×8) | ~7.0 ns/roll | — | ~0 | ~0 | **~1.8×** vs scalar (8 lockstep lanes) |
 | MC +Second Chance | 57 ns/roll | 1.87 | 21.1 | 4.4 | hash policy lookup per decision |
 | xoshiro256++ next / bounded | 0.7–0.8 ns | 4.9–6.3 | 0 | 0 | not a bottleneck |
 | `round_solve` (Ch.4 inner) | 47 µs/solve | 3.63 | 0.3 | 0.1 | **compute** (full 8K-state re-solve) |

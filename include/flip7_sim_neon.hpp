@@ -62,11 +62,6 @@ struct Xoshiro128ppx4 {
     }
 };
 
-// popcount of each 16-bit lane.
-static inline uint16x8_t neon_popcount_u16(uint16x8_t m) {
-    return vpaddlq_u8(vcntq_u8(vreinterpretq_u8_u16(m)));
-}
-
 // NEON numbers-only MC. Same semantics as monte_carlo_solitaire; uses dp.hit[] as
 // the policy (pass an all-true table for the Flip-7-maximizing run). If hist != null
 // (length kRoundScoreMax+1), it receives the realized score histogram (counts) for a
@@ -87,31 +82,32 @@ inline MCResult monte_carlo_solitaire_neon(const SolitaireTurnDP& dp, uint64_t n
 
     uint16x8_t mask  = vdupq_n_u16(0);   // held set per lane
     uint16x8_t score = vdupq_n_u16(0);   // running sum of held values per lane
+    uint16x8_t pop   = vdupq_n_u16(0);   // popcount(mask), tracked incrementally
 
     // Deferred reductions: accumulate in 32-bit lanes, fold to scalars every 8192
     // steps (a lane gains <= 78 per step for sum, so 8192 steps stays well < 2^32).
     uint32x4_t accSum = vdupq_n_u32(0), accSq = vdupq_n_u32(0);
-    uint32x4_t accStay = vdupq_n_u32(0), accBust = vdupq_n_u32(0), accF7 = vdupq_n_u32(0);
+    uint16x8_t cStay = vdupq_n_u16(0), cBust = vdupq_n_u16(0), cF7 = vdupq_n_u16(0);
     double sum = 0.0, sumsq = 0.0;
     uint64_t completed = 0;
     long busts = 0, flip7s = 0, stays = 0;
 
-    auto flush = [&] {
+    auto flush = [&] {                       // fold lane accumulators to scalars (every 8192 steps)
         sum   += (double)(vaddvq_u32(accSum));
         sumsq += (double)(vaddvq_u32(accSq));
-        stays  += vaddvq_u32(accStay);
-        busts  += vaddvq_u32(accBust);
-        flip7s += vaddvq_u32(accF7);
+        stays  += vaddvq_u32(vpaddlq_u16(cStay));
+        busts  += vaddvq_u32(vpaddlq_u16(cBust));
+        flip7s += vaddvq_u32(vpaddlq_u16(cF7));
         completed = (uint64_t)(stays + busts + flip7s);
-        accSum = accSq = accStay = accBust = accF7 = vdupq_n_u32(0);
+        accSum = accSq = vdupq_n_u32(0);
+        cStay = cBust = cF7 = vdupq_n_u16(0);
     };
 
     for (int step = 0;; ++step) {
         if ((step & 8191) == 0) { flush(); if (completed >= n) break; }
 
         // Remaining-deck size and the Hit/Stay decision, from the pre-draw mask.
-        const uint16x8_t pop = neon_popcount_u16(mask);
-        const uint16x8_t T   = vsubq_u16(v79, pop);
+        const uint16x8_t T = vsubq_u16(v79, pop);            // cards left = 79 - popcount
 
         uint16_t hm[8]; vst1q_u16(hm, mask);                 // policy gather (8 scalar loads)
         const uint16_t hv[8] = {
@@ -133,14 +129,16 @@ inline MCResult monte_carlo_solitaire_neon(const SolitaireTurnDP& dp, uint64_t n
         const uint16x8_t r = vcombine_u16(vmovn_u32(rlo), vmovn_u32(rhi));
 
         // Categorical decode: pick value v whose cumulative remaining range holds r.
-        uint16x8_t cum = vdupq_n_u16(0), drawn = vdupq_n_u16(0);
+        // Running-remainder trick: keep rr = r - cum_excl[v] (and msh = mask>>v), so
+        // "cum<=r<cum+rem" collapses to one unsigned compare rr<rem (rr underflows to
+        // a huge value past the match, killing later compares; rem==0 self-skips).
+        uint16x8_t rr = r, msh = mask, drawn = vdupq_n_u16(0);
         for (int v = 0; v < kNumValues; ++v) {
-            const uint16x8_t bitv = vandq_u16(vshlq_u16(mask, vdupq_n_s16((int16_t)-v)), one);
-            const uint16x8_t rem  = vsubq_u16(vdupq_n_u16(basev[v]), bitv);
-            const uint16x8_t hi   = vaddq_u16(cum, rem);
-            const uint16x8_t inr  = vandq_u16(vcleq_u16(cum, r), vcltq_u16(r, hi));
+            const uint16x8_t rem = vsubq_u16(vdupq_n_u16(basev[v]), vandq_u16(msh, one));
+            const uint16x8_t inr = vcltq_u16(rr, rem);
             drawn = vaddq_u16(drawn, vandq_u16(inr, vdupq_n_u16((uint16_t)v)));
-            cum = hi;
+            rr  = vsubq_u16(rr, rem);
+            msh = vshrq_n_u16(msh, 1);
         }
 
         const uint16x8_t bit   = vshlq_u16(one, vreinterpretq_s16_u16(drawn));   // 1<<v
@@ -148,8 +146,8 @@ inline MCResult monte_carlo_solitaire_neon(const SolitaireTurnDP& dp, uint64_t n
         const uint16x8_t add   = vbicq_u16(hit, dup);                            // Hit and not a dup
         score = vaddq_u16(score, vandq_u16(add, drawn));
         mask  = vorrq_u16(mask, vandq_u16(add, bit));
-        const uint16x8_t pop2  = vsubq_u16(pop, add);                            // popcount + (added?1:0)
-        const uint16x8_t flip7 = vceqq_u16(pop2, v7);
+        pop   = vsubq_u16(pop, add);                                             // popcount + (added?1:0)
+        const uint16x8_t flip7 = vceqq_u16(pop, v7);
 
         const uint16x8_t stay   = vmvnq_u16(hit);
         const uint16x8_t busted = vandq_u16(hit, dup);
@@ -160,11 +158,11 @@ inline MCResult monte_carlo_solitaire_neon(const SolitaireTurnDP& dp, uint64_t n
         fin = vbicq_u16(fin, busted);                               // bust -> 0
         const uint16x8_t finE = vandq_u16(ended, fin);
 
-        accSum  = vaddq_u32(accSum,  vpaddlq_u16(finE));
-        accSq   = vaddq_u32(accSq,   vpaddlq_u16(vandq_u16(ended, vmulq_u16(fin, fin))));
-        accStay = vaddq_u32(accStay, vpaddlq_u16(vandq_u16(stay,   one)));
-        accBust = vaddq_u32(accBust, vpaddlq_u16(vandq_u16(busted, one)));
-        accF7   = vaddq_u32(accF7,   vpaddlq_u16(vandq_u16(f7end,  one)));
+        accSum = vaddq_u32(accSum, vpaddlq_u16(finE));
+        accSq  = vaddq_u32(accSq,  vpaddlq_u16(vandq_u16(ended, vmulq_u16(fin, fin))));
+        cStay  = vsubq_u16(cStay,  stay);    // predicate is 0xFFFF (= -1) => add 1
+        cBust  = vsubq_u16(cBust,  busted);
+        cF7    = vsubq_u16(cF7,    f7end);
 
         if (hist) {                                                 // full-distribution check (off the hot path)
             uint16_t fv[8], ev[8];
@@ -174,6 +172,7 @@ inline MCResult monte_carlo_solitaire_neon(const SolitaireTurnDP& dp, uint64_t n
 
         mask  = vbicq_u16(mask,  ended);                            // reset ended lanes
         score = vbicq_u16(score, ended);
+        pop   = vbicq_u16(pop,   ended);
     }
 
     MCResult r;

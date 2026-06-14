@@ -29,8 +29,8 @@ static constexpr int kT = 200;  // target
 
 // A/B/C for a given round-score distribution; prints headline win-prob numbers.
 static void competitive_summary(const char* label, const std::vector<double>& D, int kT) {
-    double tot = 0, mean = 0;
-    for (int s = 0; s < (int)D.size(); ++s) { tot += D[s]; mean += s * D[s]; }
+    double mean = 0;
+    for (int s = 0; s < (int)D.size(); ++s) mean += s * D[s];
     const double er = expected_rounds_to_target(D, kT);
     const auto Wg = win_prob_greedy(D, kT);
     auto wg = [&](int a, int b) { return Wg[(size_t)a * kT + b]; };

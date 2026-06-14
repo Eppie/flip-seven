@@ -103,47 +103,9 @@ int main() {
     printf("   Idealized availability: the agent may aim one Flip Three every round (none / self De /\n");
     printf("   opp Dl). This isolates the targeting DIRECTION and its ceiling; the real ~3/94 card\n");
     printf("   frequency is measured in Part C. (self De is ~neutral, so it is dominated by none.)\n");
-    auto support = [](const std::vector<double>& P) {
-        std::vector<int> s;
-        for (int i = 0; i < (int)P.size(); ++i) if (P[i] > 0) s.push_back(i);
-        return s;
-    };
-    const auto supD = support(D), supDe = support(De), supDl = support(Dl);
-    std::vector<double>  W((size_t)kT * kT, 0.0);
-    std::vector<uint8_t> pol((size_t)kT * kT, 0);  // 0 none, 1 self, 2 opp
     auto tB = clk::now();
-    auto optval = [&](int a, int b, const std::vector<double>& pa, const std::vector<int>& sa,
-                      const std::vector<double>& po, const std::vector<int>& so) {
-        double num = 0.0;
-        const double self = pa[0] * po[0];
-        for (int x : sa) {
-            const double pax = pa[x];
-            const int A = a + x;
-            for (int y : so) {
-                if (x == 0 && y == 0) continue;
-                const double p = pax * po[y];
-                const int B = b + y;
-                if (A >= kT || B >= kT) num += p * (A > B ? 1.0 : (A == B ? 0.5 : 0.0));
-                else                    num += p * W[(size_t)A * kT + B];
-            }
-        }
-        return num / (1.0 - self);
-    };
-    for (int sumab = 2 * (kT - 1); sumab >= 0; --sumab) {
-        const int alo = std::max(0, sumab - (kT - 1));
-        const int ahi = std::min(kT - 1, sumab);
-        for (int a = alo; a <= ahi; ++a) {
-            const int b = sumab - a;
-            const double vn = optval(a, b, D, supD, D, supD);
-            const double vs = optval(a, b, De, supDe, D, supD);
-            const double vo = optval(a, b, D, supD, Dl, supDl);
-            double best = vn; uint8_t bp = 0;
-            if (vs > best) { best = vs; bp = 1; }
-            if (vo > best) { best = vo; bp = 2; }
-            W[(size_t)a * kT + b] = best;
-            pol[(size_t)a * kT + b] = bp;
-        }
-    }
+    std::vector<uint8_t> pol;  // 0 none, 1 self, 2 opp
+    std::vector<double> W = win_prob_flip3_target(D, De, Dl, kT, &pol);
     printf("   W(0,0) = %.5f  => one optimally-targeted Flip Three per round is worth +%.4f win prob\n",
            W[0], W[0] - 0.5);
     printf("   solved in %.3f s\n", secs(tB));

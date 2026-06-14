@@ -22,7 +22,9 @@
 #include "flip7_core.hpp"
 #include "flip7_rng.hpp"
 
+#include <algorithm>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace flip7 {
@@ -150,6 +152,59 @@ inline PmfStats pmf_stats(const double* p, double pf7) {
     double m = 0, tot = 0;
     for (int s = 0; s <= kRoundScoreMax; ++s) { m += s * p[s]; tot += p[s]; }
     return {tot > 0 ? m / tot : 0.0, tot > 0 ? p[0] / tot : 0.0, tot > 0 ? pf7 / tot : 0.0};
+}
+
+// Win-probability grid for first-to-`target` when the agent may aim one Flip
+// Three every round: none (both play D), self (agent plays the gift pmf De), or
+// opp (opponent plays the attacked pmf Dl). Returns the grid W[a*target+b] =
+// P(agent wins) at round-start totals (a,b); if polOut != nullptr it receives the
+// chosen target per state (0 none / 1 self / 2 opp). Topological by (a+b) with the
+// both-bust self-loop folded into each option's closed form (linear in W[a][b]).
+inline std::vector<double> win_prob_flip3_target(
+        const std::vector<double>& D, const std::vector<double>& De,
+        const std::vector<double>& Dl, int target, std::vector<uint8_t>* polOut = nullptr) {
+    auto support = [](const std::vector<double>& P) {
+        std::vector<int> s;
+        for (int i = 0; i < (int)P.size(); ++i) if (P[i] > 0) s.push_back(i);
+        return s;
+    };
+    const auto sD = support(D), sDe = support(De), sDl = support(Dl);
+    std::vector<double>  W((size_t)target * target, 0.0);
+    std::vector<uint8_t> pol((size_t)target * target, 0);
+    auto optval = [&](int a, int b, const std::vector<double>& pa, const std::vector<int>& sa,
+                      const std::vector<double>& po, const std::vector<int>& so) {
+        double num = 0.0;
+        const double self = pa[0] * po[0];
+        for (int x : sa) {
+            const double pax = pa[x];
+            const int A = a + x;
+            for (int y : so) {
+                if (x == 0 && y == 0) continue;
+                const double p = pax * po[y];
+                const int B = b + y;
+                if (A >= target || B >= target) num += p * (A > B ? 1.0 : (A == B ? 0.5 : 0.0));
+                else                            num += p * W[(size_t)A * target + B];
+            }
+        }
+        return num / (1.0 - self);
+    };
+    for (int sumab = 2 * (target - 1); sumab >= 0; --sumab) {
+        const int alo = std::max(0, sumab - (target - 1));
+        const int ahi = std::min(target - 1, sumab);
+        for (int a = alo; a <= ahi; ++a) {
+            const int b = sumab - a;
+            const double vn = optval(a, b, D, sD, D, sD);
+            const double vs = optval(a, b, De, sDe, D, sD);
+            const double vo = optval(a, b, D, sD, Dl, sDl);
+            double best = vn; uint8_t bp = 0;
+            if (vs > best) { best = vs; bp = 1; }
+            if (vo > best) { best = vo; bp = 2; }
+            W[(size_t)a * target + b] = best;
+            pol[(size_t)a * target + b] = bp;
+        }
+    }
+    if (polOut) *polOut = std::move(pol);
+    return W;
 }
 
 // --- independent numbers-only MC validator (force-injection) ------------------

@@ -7,6 +7,7 @@
 #include "flip7_core.hpp"
 #include "flip7_dp.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <initializer_list>
@@ -52,18 +53,22 @@ static double evaluate(Hit should_hit) {
 }
 
 int main() {
+    const auto t0 = std::chrono::steady_clock::now();
     SolitaireTurnDP dp;
     const double opt = dp.optimal();
+    const auto t_dp = std::chrono::steady_clock::now();
+    int evals = 0;
+    auto EV = [&](auto&& h){ ++evals; return evaluate(h); };  // count policy evaluations
     printf("=== Flip 7 - Chapter 2: the optimal strategy & separability (numbers only) ===\n\n");
     printf("Exact optimal E[score] = %.6f\n", opt);
     printf("(forward-eval of the DP policy = %.6f, sanity)\n\n",
-           evaluate([&](uint16_t S){ return dp.hit[S]; }));
+           EV([&](uint16_t S){ return dp.hit[S]; }));
 
     // --- Heuristic 1: stop after k unique cards ---
     printf("--- Heuristic: \"hit until you hold k unique numbers, then stay\" ---\n");
     double best_k_ev = 0; int best_k = 0;
     for (int k = 3; k <= 7; ++k) {
-        const double ev = evaluate([k](uint16_t S){ return maskPop(S) < k; });
+        const double ev = EV([k](uint16_t S){ return maskPop(S) < k; });
         printf("  k=%d : E[score] = %7.4f   (%.1f%% of optimal)\n", k, ev, 100.0 * ev / opt);
         if (ev > best_k_ev) { best_k_ev = ev; best_k = k; }
     }
@@ -75,7 +80,7 @@ int main() {
     double best_T_ev = 0; int best_T = 0;
     double ev_T[80] = {0};
     for (int T = 1; T <= 60; ++T) {
-        ev_T[T] = evaluate([T](uint16_t S){ return maskSum(S) < T; });
+        ev_T[T] = EV([T](uint16_t S){ return maskSum(S) < T; });
         if (ev_T[T] > best_T_ev) { best_T_ev = ev_T[T]; best_T = T; }
     }
     printf("    T  : E[score]  (%% of optimal)\n");
@@ -91,7 +96,7 @@ int main() {
     double best_th_ev = 0, best_th = 0;
     for (int i = 1; i < 100; ++i) {
         const double th = i / 100.0;
-        const double ev = evaluate([th](uint16_t S){ return pbust(S) < th; });
+        const double ev = EV([th](uint16_t S){ return pbust(S) < th; });
         if (ev > best_th_ev) { best_th_ev = ev; best_th = th; }
     }
     printf("  best: theta=%.2f at %.4f  (gap to optimal: %.4f, %.2f%%)\n\n",
@@ -131,5 +136,13 @@ int main() {
            100.0 * best_th_ev / opt, 100.0 * best_k_ev / opt);
     printf("  The last ~%.1f%% needs the exact hand (chase the +15 at 6 cards, mind exact values).\n",
            100.0 * (opt - best_th_ev) / opt);
+
+    const auto t_end = std::chrono::steady_clock::now();
+    const double dp_s = std::chrono::duration<double>(t_dp - t0).count();
+    const double ev_s = std::chrono::duration<double>(t_end - t_dp).count();
+    printf("\n[perf] DP: %ld states in %.3f ms; %d policy evaluations in %.1f ms"
+           " (%.0f K evals/s, ~%.0f M states/s)\n",
+           dp.states_evaluated, dp_s * 1e3, evals, ev_s * 1e3,
+           ev_s > 0 ? evals / ev_s / 1e3 : 0.0, ev_s > 0 ? evals * 5812.0 / ev_s / 1e6 : 0.0);
     return 0;
 }

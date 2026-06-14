@@ -273,10 +273,12 @@ not yet needed at this scale.
 
 ### PMU profiling (`make profile`)
 
-`perf/profile.cpp` instruments the hot kernels with [`perf.h`](third_party/perf.h)
-(a vendored single-header Apple-Silicon PMU library) to find optimization
-opportunities. `make profile` then `sudo ./bin/profile` (programming counters
-needs root) reports IPC and per-op cost plus stall sources. On the M4 Pro:
+Every chapter program prints its own wall-clock and throughput (DP states/s, MC
+rollouts/s, games/s, solve times), and `perf/profile.cpp` instruments the hot
+kernels of **all five chapters** with [`perf.h`](third_party/perf.h) (a vendored
+single-header Apple-Silicon PMU library) to find optimization opportunities.
+`make profile` then `sudo ./bin/profile` (programming counters needs root) reports
+IPC and per-op cost plus stall sources. On the M4 Pro:
 
 | kernel | ns/op | IPC | dTLB/kI | L2TLB/kI | bound by |
 |---|---:|---:|---:|---:|---|
@@ -286,12 +288,16 @@ needs root) reports IPC and per-op cost plus stall sources. On the M4 Pro:
 | MC +Second Chance | 57 ns/roll | 1.87 | 21.1 | 4.4 | hash policy lookup per decision |
 | xoshiro256++ next / bounded | 0.7–0.8 ns | 4.9–6.3 | 0 | 0 | not a bottleneck |
 | `round_solve` (Ch.4 inner) | 47 µs/solve | 3.63 | 0.3 | 0.1 | **compute** (full 8K-state re-solve) |
+| Ch.5 pmf builders (A/B) | 35–77 µs/call | — | — | — | dense forward enumeration |
+| Ch.5 94-card duel (C) | ~2.6 µs/game | — | — | — | divergent control + dense lookup |
 
-Findings: the **hashed DPs are TLB-bound** (the ~1 GB / 34 GB tables thrash the
-TLB — the `[TLB detail]` line shows one hardware page-table walk per L2 TLB miss,
-~one walk per state, so most of the 647 cyc/state is address translation; 2 MB
-superpages or a denser table are the lever, still TODO); the dense DPs,
-Monte-Carlo, and PRNG are already near peak IPC.
+(The last two rows are the Chapter 5 kernels — the `[chapter 5 …]` sections of
+`make profile`; the IPC/TLB/branch columns populate under `sudo`.) Findings: the
+**hashed DPs are TLB-bound** (the ~1 GB / 34 GB tables thrash the TLB — the
+`[TLB detail]` line shows one hardware page-table walk per L2 TLB miss, ~one walk
+per state, so most of the 647 cyc/state is address translation; 2 MB superpages or
+a denser table are the lever, still TODO); the dense DPs, Monte-Carlo, PRNG, and
+the Ch.5 duel are already near peak IPC.
 
 The Ch.4 best response *was* compute-bound on re-solving the within-round DP, but
 that is now fixed: only `g[0]` changes between fixed-point iterations and the

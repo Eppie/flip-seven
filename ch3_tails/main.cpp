@@ -9,6 +9,7 @@
 #include "flip7_sim.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <vector>
@@ -64,6 +65,8 @@ static double Vflip7(uint16_t S) {
 }
 
 int main() {
+    using clk = std::chrono::steady_clock;
+    const auto t0 = clk::now();
     printf("=== Flip 7 - Chapter 3: tail probabilities (the \"perfect game\") ===\n\n");
 
     // ---- Numbers-only, exact ----
@@ -87,6 +90,7 @@ int main() {
     // MC cross-check both policies (numbers only).
     SolitaireTurnDP allhit_dp;
     allhit_dp.hit.fill(true);
+    const auto t_mc0 = clk::now();
     const MCResult mc_opt = monte_carlo_solitaire(dp, 50'000'000ULL, 0xF117ULL);
     const MCResult mc_ah  = monte_carlo_solitaire(allhit_dp, 50'000'000ULL, 0xF117ULL);
     printf("  [MC] optimal : P(bust)=%.5f P(Flip7)=%.5f  (DP %.5f / %.5f)\n",
@@ -97,6 +101,7 @@ int main() {
     // ---- All 94 cards ----
     printf("--- all 94 cards ---\n");
     const MCFullResult full_ah = monte_carlo_all_alwayshit(50'000'000ULL, 0xF117ULL);
+    const auto t_mc1 = clk::now();
     printf("  expected-optimal play   : P(bust)=0.2935  P(Flip 7)=0.01259  (from the all-94 exact solve)\n");
     printf("  Flip-7-max (always hit) : P(bust)=%.4f  P(Flip 7)=%.4f  E[score]=%.4f\n",
            full_ah.p_bust, full_ah.p_flip7, full_ah.mean);
@@ -105,5 +110,10 @@ int main() {
     printf("  and a forced Freeze ends the attempt %.1f%% of the time.\n", 100 * full_ah.p_froze);
     printf("  => with all cards, going for it reaches Flip 7 ~%.1f%% of the time vs ~1.3%% playing for score.\n",
            100 * full_ah.p_flip7);
+
+    const double mc_s  = std::chrono::duration<double>(t_mc1 - t_mc0).count();
+    const double tot_s = std::chrono::duration<double>(clk::now() - t0).count();
+    printf("\n[perf] 150M Monte-Carlo rollouts (3 x 50M) in %.2f s (%.0f M rollouts/s); total wall-clock %.2f s\n",
+           mc_s, mc_s > 0 ? 150.0 / mc_s : 0.0, tot_s);
     return 0;
 }

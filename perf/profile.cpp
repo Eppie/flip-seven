@@ -7,9 +7,11 @@
 // Without root it still runs and prints wall-clock time only.
 #include "perf.h"
 
+#include "flip7_actions.hpp"
 #include "flip7_compete.hpp"
 #include "flip7_core.hpp"
 #include "flip7_dp.hpp"
+#include "flip7_duel.hpp"
 #include "flip7_rng.hpp"
 #include "flip7_sim.hpp"
 
@@ -123,6 +125,44 @@ int main() {
     std::vector<double> Dall = load_pmf("data/round_pmf_all94.txt");
     if (!Dall.empty())
         profile("win_prob_greedy(all94)", CACHE_PROFILE, 0, "", [&]{ volatile auto w = win_prob_greedy(Dall, 200)[0]; (void)w; });
+
+    // ---- Chapter 5: adversarial action-card kernels ----
+    std::printf("\n[chapter 5: action-card kernels]\n");
+    {
+        init_round_tables();
+        std::vector<double> Uo; std::vector<uint8_t> hit;
+        numbers_opt_policy(Uo, hit);
+
+        // Part A: exact pmf builders (forward enumeration over forced x hand).
+        std::vector<double> init(1 << kNumValues, 0.0), out(kRoundScoreMax + 1);
+        init[0] = 1.0;
+        const uint64_t C = 100'000;
+        profile("pmf_from_dist(forced3)", CACHE_PROFILE, (double)C, "call",
+                [&]{ volatile double a = 0; for (uint64_t i = 0; i < C; ++i) a += pmf_from_dist(init.data(), 3, hit.data(), out.data()); (void)a; });
+        profile("pmf_flip3_at_stop",      CACHE_PROFILE, (double)C, "call",
+                [&]{ volatile double a = 0; for (uint64_t i = 0; i < C; ++i) a += pmf_flip3_at_stop(hit.data(), out.data()); (void)a; });
+
+        // Part B: the win-prob Flip-Three targeting DP (none / self / opp), 200x200 grid.
+        std::vector<double> D5(kRoundScoreMax + 1), De(kRoundScoreMax + 1), Dl(kRoundScoreMax + 1);
+        pmf_forced(0, 0, hit.data(), D5.data());
+        pmf_forced(0, 3, hit.data(), De.data());
+        pmf_flip3_at_stop(hit.data(), Dl.data());
+        profile("win_prob_targeting(B)",  CACHE_PROFILE, 0, "",
+                [&]{ volatile double w = win_prob_flip3_target(D5, De, Dl, 200)[0]; (void)w; });
+    }
+
+    // ---- Chapter 5 Part C: the full 94-card 2-player duel engine ----
+    // Divergent control flow (status checks + targeting) + dense ModDP policy
+    // lookups: the new hot kernel, profiled per game (cache then branch).
+    std::printf("\n[chapter 5: 94-card 2-player duel] (per game)\n");
+    {
+        SolitaireModDP mdp; mdp.optimal();
+        const uint64_t G = 100'000;
+        profile("duel adv-vs-random", CACHE_PROFILE,  (double)G, "game",
+                [&]{ volatile double s = run_duel(mdp, TP_ADVERSARIAL, TP_RANDOM, 3, 200, G, 11).p0_score; (void)s; });
+        profile("duel adv-vs-random", BRANCH_PROFILE, (double)G, "game",
+                [&]{ volatile double s = run_duel(mdp, TP_ADVERSARIAL, TP_RANDOM, 3, 200, G, 12).p0_score; (void)s; });
+    }
 
     return 0;
 }

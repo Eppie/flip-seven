@@ -311,4 +311,83 @@ inline MCFullResult monte_carlo_all(const SolitaireAllDP& dp, uint64_t n, uint64
     return r;
 }
 
+// --- All 94 cards, "always hit" (the Flip-7-maximizing policy) ----------------
+// Never voluntarily stays (staying => 0 chance of Flip 7); the only stops are a
+// forced Freeze, a bust, or reaching 7 uniques. Needs no DP table.
+inline MCFullResult monte_carlo_all_alwayshit(uint64_t n, uint64_t seed) {
+    Xoshiro256pp rng;
+    rng.seed(seed);
+    const int total = SolitaireAllDP::kDeckTotal;  // 94
+
+    uint8_t deck[SolitaireAllDP::kDeckTotal];
+    int idx = 0;
+    for (int v = 0; v < kNumValues; ++v)
+        for (int k = 0, c = numberCount(v); k < c; ++k) deck[idx++] = (uint8_t)v;
+    for (int i = 0; i < kNumModifiers; ++i)    deck[idx++] = (uint8_t)(13 + i);
+    for (int i = 0; i < kNumSecondChance; ++i) deck[idx++] = (uint8_t)19;
+    for (int i = 0; i < 3; ++i)                deck[idx++] = (uint8_t)20;  // Flip Three
+    for (int i = 0; i < 3; ++i)                deck[idx++] = (uint8_t)21;  // Freeze
+
+    double sum = 0.0, sumsq = 0.0;
+    long busts = 0, flip7s = 0, stays = 0, saved = 0, froze = 0, flip3 = 0;
+    int sp[256], sj[256];
+
+    for (uint64_t t = 0; t < n; ++t) {
+        uint16_t nm = 0, mm = 0;
+        int sch = 0, fz = 0, forced = 0, pos = 0, ns = 0;
+        double score = 0.0;
+        bool didsave = false, didfroze = false, didflip3 = false;
+        for (;;) {
+            if (forced == 0 && fz >= 1) { score = (double)fullScore(nm, mm); ++stays; didfroze = true; break; }
+            const bool was_forced = (forced > 0);  // free state: always hit (no stay)
+            const uint64_t j = pos + rng.bounded((uint64_t)(total - pos));
+            { const uint8_t tmp = deck[pos]; deck[pos] = deck[j]; deck[j] = tmp; }
+            sp[ns] = pos; sj[ns] = (int)j; ++ns;
+            const uint8_t card = deck[pos];
+            ++pos;
+            if (was_forced) --forced;
+            if (card < 13) {
+                const uint16_t bit = (uint16_t)(1u << card);
+                if (nm & bit) {
+                    if (sch) { sch = 0; didsave = true; }      // Second Chance saves
+                    else     { score = 0.0; ++busts; break; }
+                } else {
+                    nm |= bit;
+                    if (maskPop(nm) == kFlip7Target) { score = (double)fullScore(nm, mm); ++flip7s; break; }
+                }
+            } else if (card < 19) {
+                mm |= (uint16_t)(1u << (card - 13));
+            } else if (card == 19) {
+                if (!sch) sch = 1;
+            } else if (card == 20) {
+                forced += 3; didflip3 = true;
+            } else {                                            // Freeze
+                if (!was_forced) { score = (double)fullScore(nm, mm); ++stays; didfroze = true; break; }
+                else { ++fz; }
+            }
+        }
+        for (int s = ns - 1; s >= 0; --s) { const uint8_t tmp = deck[sp[s]]; deck[sp[s]] = deck[sj[s]]; deck[sj[s]] = tmp; }
+        if (didsave) ++saved;
+        if (didfroze) ++froze;
+        if (didflip3) ++flip3;
+        sum += score;
+        sumsq += score * score;
+    }
+
+    MCFullResult r;
+    r.n = n;
+    r.mean = sum / (double)n;
+    double var = sumsq / (double)n - r.mean * r.mean;
+    if (var < 0) var = 0;
+    r.stddev = std::sqrt(var);
+    r.stderr_ = std::sqrt(var / (double)n);
+    r.p_bust = (double)busts / (double)n;
+    r.p_flip7 = (double)flip7s / (double)n;
+    r.p_stay = (double)stays / (double)n;
+    r.p_saved = (double)saved / (double)n;
+    r.p_froze = (double)froze / (double)n;
+    r.p_flip3 = (double)flip3 / (double)n;
+    return r;
+}
+
 }  // namespace flip7

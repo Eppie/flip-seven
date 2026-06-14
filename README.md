@@ -93,6 +93,10 @@ cards you hold.
 | stop at banked sum ≥ T | T = 23 | 99.76% |
 | stop at P(bust) ≥ θ | θ ≈ 0.26 | **99.81%** |
 
+If you want a "stop at score ≥ N" rule, **N = 23** is best, and the plateau is broad
+— any cutoff in **21–25 stays above 99%** of optimal (e.g. 20→98.3%, 22→99.6%,
+24→99.4%, 26→98.5%), so the choice is forgiving.
+
 The last ~0.2% is genuinely **non-separable** — no single threshold is exactly
 optimal. The clinching evidence: the optimal policy **hits** `{3,4,5,6,8,9}` at a
 **39.7%** bust risk (it's one card from the +15 Flip-7 bonus, worth the gamble) yet
@@ -103,6 +107,27 @@ the billion-entry table, not a one-liner, but the same shape holds: Second Chanc
 makes you push harder, big modifiers raise the stakes, and Freeze/Flip Three you
 can't control.)
 
+### Chapter 3 — tail probabilities (the "perfect game")
+
+Flip 7 — collecting 7 unique numbers for the +15 — is the game's perfect hand, and
+how often it happens is entirely strategy-dependent. Maximizing P(Flip 7) is
+provably just **"always hit"** (staying gives zero chance), confirmed by an exact
+Flip-7-maximizing DP.
+
+| Policy | E[score] | P(bust) | P(Flip 7) |
+|---|---:|---:|---:|
+| **numbers only**, play for score | 18.5652 | 0.3135 | **0.28%** |
+| **numbers only**, go for Flip 7 (always hit) | 5.7433 | 0.9134 | **8.66%** |
+| **all 94**, play for score | 20.2980 | 0.2935 | **1.26%** |
+| **all 94**, go for Flip 7 (always hit) | 9.84 | 0.742 | **8.83%** |
+
+Going for it raises the Flip-7 rate **~31×** (numbers only), at the cost of busting
+~91% of the time and gutting the expected score. With all 94 cards the perfect-game
+ceiling is **~8.8%**: Second Chance (saves ~11.5% of attempts) and Flip Three (forces
+draws toward 7) push it up, while a forced Freeze ends ~17% of attempts — and the
+action cards actually *lower* the bust rate (a Freeze ends in a Stay, not a bust).
+All figures are exact (numbers-only) or Monte-Carlo with the exact policies, cross-checked.
+
 ## Build & run
 
 Requires a C++20 compiler (tested with Apple Clang on an Apple M4 Pro; the
@@ -110,7 +135,7 @@ Makefile auto-detects the best `-mcpu`).
 
 ```sh
 make            # build all binaries + tests
-make run        # fast headline numbers (numbers, +modifiers, +Second Chance)
+make run        # fast headline numbers (Ch.1 progression, Ch.2 strategy, Ch.3 tails)
 make test       # assert them (DP<->MC agreement + regression)
 make all-cards  # the full 94-card solitaire DP (~5 min, ~34 GB) -- opt-in
 make test-all-cards

@@ -70,15 +70,21 @@ int main() {
     printf("  best: k=%d at %.4f  (gap to optimal: %.4f, %.2f%%)\n\n",
            best_k, best_k_ev, opt - best_k_ev, 100.0 * (opt - best_k_ev) / opt);
 
-    // --- Heuristic 2: stop once banked score >= T ---
-    printf("--- Heuristic: \"hit until your banked sum >= T\" ---\n");
+    // --- Heuristic 2: stop once banked score >= T (full sweep) ---
+    printf("--- Heuristic: \"hit until your banked sum >= T, then stay\" (which T?) ---\n");
     double best_T_ev = 0; int best_T = 0;
+    double ev_T[80] = {0};
     for (int T = 1; T <= 60; ++T) {
-        const double ev = evaluate([T](uint16_t S){ return maskSum(S) < T; });
-        if (ev > best_T_ev) { best_T_ev = ev; best_T = T; }
+        ev_T[T] = evaluate([T](uint16_t S){ return maskSum(S) < T; });
+        if (ev_T[T] > best_T_ev) { best_T_ev = ev_T[T]; best_T = T; }
     }
-    printf("  best: T=%d at %.4f  (gap to optimal: %.4f, %.2f%%)\n\n",
-           best_T, best_T_ev, opt - best_T_ev, 100.0 * (opt - best_T_ev) / opt);
+    printf("    T  : E[score]  (%% of optimal)\n");
+    for (int T = 1; T <= 40; ++T)
+        printf("    %2d : %7.4f   %5.1f%%%s\n", T, ev_T[T], 100.0 * ev_T[T] / opt,
+               T == best_T ? "   <- best" : "");
+    printf("  best: T=%d at %.4f  (gap to optimal: %.4f, %.2f%%)\n", best_T, best_T_ev,
+           opt - best_T_ev, 100.0 * (opt - best_T_ev) / opt);
+    printf("  (broad plateau: any T in 21..25 stays above ~99%%; 22..24 within ~0.6%% of optimal.)\n\n");
 
     // --- Heuristic 3: stop once P(bust) >= theta ---
     printf("--- Heuristic: \"hit while P(bust on next flip) < theta\" ---\n");

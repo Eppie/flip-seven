@@ -37,8 +37,9 @@ build up. We do not start with the full 94-card multiplayer game.
   extra deck state.
 - **Chapter 4 (across rounds):** the MC simulator models the **true continuous shoe**
   (ground truth). The DP uses a **fresh-deck-per-round approximation** for tractability,
-  and we **measure the discrepancy with MC** rather than assume it away. We do **not**
-  build a with-replacement idealization (the user specified without replacement).
+  and we **measure the discrepancy with MC** rather than assume it away. Every model
+  here draws **without replacement** (the real rules); we do not approximate with
+  replacement.
 
 ---
 
@@ -103,15 +104,19 @@ else:
 a fresh 79-card number deck (partial Fisher–Yates). Report mean ± standard error and the
 agreement (z-score) vs. `EV(∅)`.
 
-### Correctness wrinkle for stage (b)+ (record now)
+### Correctness wrinkle for stage (b)+ (how the exact DP handles it)
 
 The held hand captures `number_mask` and `modifier_mask` exactly (modifiers are one-of-each;
-numbers are a set). It does **not** capture how many *traceless* cards have been consumed:
-discarded duplicate **Second Chance** cards and resolved **Flip Three** cards leave no mark
-in the hand yet change the remaining deck. For an exact DP at stage (b)+, extend the state
-with small consumed-counts (e.g. `sc_consumed ∈ 0..3`, `flip3_consumed ∈ 0..3`). Freeze is
-terminal, so it can't have been consumed while still deciding. (Chapter 1 numbers-only is
-free of this wrinkle.)
+numbers are a set). It does **not** capture how many *traceless* cards have left the deck:
+when a **Second Chance** save fires, the discarded duplicate number card is removed without
+any mark in the hand; a second copy of that value is now gone. The exact DP therefore tracks
+**per-value extra discards** `extra[v]` (saved duplicates of value `v`, total ≤ 3), so the
+remaining count of `v` is `count(v) − [v held] − extra[v]`. Because a save permanently removes
+a card, every transition adds exactly one drawn card and the state graph is acyclic. The
+`extra[]` dimension is sparse (sum ≤ 3) and does not pack into a dense index, so the full DP
+memoizes in a **flat open-addressing hash map** (no `std::unordered_map`); the numbers and
+numbers+modifiers DPs stay dense. (Chapter 1 numbers-only is free of this wrinkle. **Flip
+Three** / **Freeze**, deferred to stage (d), will extend the same idea.)
 
 ---
 
@@ -254,7 +259,7 @@ tests/                      DP-vs-MC asserts, golden enumeration, RNG/shuffle st
 1. **Chapter 1** — numbers-only single-turn DP + MC agreement (the milestone).
 2. Chapter 2 — separability (best threshold vs. optimal, quantified).
 3. Chapter 3 — tail probabilities under expected-optimal vs. Flip-7-maximizing policies.
-4. Stage (b) — modifiers + Second Chance (with the consumed-count state extension).
+4. Stage (b) — modifiers + Second Chance (exact; per-value extra-discard state, hashed).
 5. Chapter 4 — first-to-200 win DP, best response, fictitious-play Nash, MC tournament.
 6. Chapter 5 — action-card adversarial targeting inside the competitive model.
 7. Later — NEON kernels where regular, multithreading across games.

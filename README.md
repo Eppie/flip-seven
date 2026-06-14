@@ -39,6 +39,28 @@ cards held nor on the running score. Holding *low* numbers is far safer than
 Same hand size, opposite decisions. Quantifying the gap between optimal play and
 the best simple threshold is Chapter 2.
 
+### Chapter 1, Stage b — adding modifiers and Second Chance
+
+The same single-turn optimal stopping, with the real deck's modifier cards
+(`+2,+4,+6,+8,+10,×2`) and Second Chance cards, drawn without replacement. All
+results are **exact** and Monte-Carlo confirmed.
+
+| Deck | Exact optimal E[round score] | Monte-Carlo |
+|---|---:|---:|
+| numbers only (79) | 18.5652 | z = +0.5σ ✓ |
+| + modifiers (85) | **20.2291** | 20.2296 (z = +0.2σ) ✓ |
+| + Second Chance (88) | **22.2504** | 22.2531 (z = +1.1σ) ✓ |
+
+Modifiers are one-of-each and cannot bust, so the held hand determines the deck —
+a dense exact DP (`×2` doubles the number total only, not the +N modifiers or the
++15 bonus). **Second Chance is subtler:** when a save fires, the duplicate number
+card is also discarded, removing a *second* copy of that value from the deck with
+no trace in your hand. The exact DP tracks per-value "extra discards" (saves total
+≤ 3) so the remaining deck is always exact; because every transition permanently
+removes a card, the state graph is acyclic. That state is sparse, so the full
+solver memoizes in a flat open-addressing hash map (≈22M states, ~3 s) rather than
+a dense array. Every result uses the exact game rules.
+
 ## Build & run
 
 Requires a C++20 compiler (tested with Apple Clang on an Apple M4 Pro; the
@@ -46,11 +68,12 @@ Makefile auto-detects the best `-mcpu`).
 
 ```sh
 make          # build chapter binaries + tests
-make run      # print the Chapter 1 headline numbers
+make run      # print the headline numbers (Chapter 1 + Stage b)
 make test     # assert them (DP<->MC agreement + regression)
 ```
 
-`./bin/ch1_solitaire_turn [num_rollouts] [seed]` to vary the Monte-Carlo run.
+`./bin/ch1_solitaire_turn [num_rollouts] [seed]` and
+`./bin/ch1b_modifiers_sc [num_rollouts] [seed]` to vary the Monte-Carlo runs.
 
 ## Methods
 
@@ -70,11 +93,13 @@ make test     # assert them (DP<->MC agreement + regression)
 
 ## Performance
 
-Performance is a first-class goal: bit-packed state, constexpr-friendly
-primitives, flat arrays indexed directly by the packed state (no hashing),
-xoshiro256++ rather than `mt19937`, and partial Fisher–Yates. Every program
-prints timing and throughput. NEON/SIMD kernels and multithreading are planned
-(see `PLAN.md`) but not yet needed at this scale.
+Performance is a first-class goal: bit-packed state, dense flat arrays indexed
+directly by the packed state where the state allows it (numbers, numbers+
+modifiers), a hand-rolled flat open-addressing hash map only where it does not
+(the sparse Second Chance state — never `std::unordered_map`), xoshiro256++
+rather than `mt19937`, and partial Fisher–Yates. Every program prints timing and
+throughput. NEON/SIMD kernels and multithreading are planned (see `PLAN.md`) but
+not yet needed at this scale.
 
 ## Relation to prior work
 
@@ -86,7 +111,8 @@ exact results, not to produce them.
 
 ## Status
 
-Chapter 1 (this milestone) is complete and verified. Chapters 2–5 — separability,
-tail probabilities, the first-to-200 win-probability DP and Nash equilibrium via
+Chapter 1, including Stage b (modifiers + Second Chance), is complete and verified
+— all exact, all Monte-Carlo confirmed. Chapters 2–5 — separability, tail
+probabilities, the first-to-200 win-probability DP and Nash equilibrium via
 fictitious play, and adversarial action-card targeting — are specified in
 `PLAN.md` and not yet implemented.

@@ -3,20 +3,23 @@
 // The scalar simulator runs one rollout at a time, drawing from a physical
 // shuffled deck. That deck makes the loop sequential and resists SIMD (each lane
 // would need an independent random gather, which NEON has no instruction for). The
-// fix is to drop the deck: drawing WITHOUT replacement from a fresh 79-card number
-// deck, given the held set S (popcount p), the next card is value v with
-// probability (count(v) - [v in S]) / (79 - p) -- exactly the conditional the
-// exact DP uses. With no deck, the rollout state is just the 13-bit mask, so we
-// run EIGHT independent rollouts in lockstep (one per 16-bit lane, since the mask
-// and the <=78 scores both fit in 16 bits) with per-lane alive predicates; when a
-// lane ends (Stay / bust / Flip 7) we bank its score and reset that lane to a
-// fresh rollout, so all eight lanes stay busy.
+// fix is to drop the deck: the held set S (a 13-bit mask) fully determines the
+// remaining 79-card deck, so we run EIGHT independent rollouts in lockstep (one per
+// 16-bit lane, since the mask and the <=78 scores both fit in 16 bits) with per-
+// lane alive predicates; when a lane ends (Stay / bust / Flip 7) we bank its score
+// and reset that lane to a fresh rollout, so all eight lanes stay busy.
 //
-// The per-draw cost is a 13-step categorical decode (vs. the scalar's O(1) deck
-// pop), so the win comes from width: 8 lanes amortize that decode, plus deferred
-// horizontal reductions (accumulate in vector lanes, reduce every 8192 steps). The
-// result is statistically identical to the scalar simulator and is cross-checked
-// against it and the exact DP. Non-ARM builds fall back to the scalar simulator.
+// The next-card draw uses rejection over the FULL deck rather than a categorical
+// decode: draw a uniform position k in [0,79), look up its (value, first-copy flag)
+// in a 79-byte LUT (one cache line), and treat the single reserved first-copy
+// position of each held value as a no-op redraw. Any OTHER copy of a held value is
+// a bust; a copy of an unheld value is kept. This reproduces draw-without-
+// replacement exactly (the reserved/bust/keep probabilities are count(v) - [v in S]
+// over 79 - p, by symmetry of the uniform positions) with one small gather instead
+// of a 13-step loop. With deferred horizontal reductions (reduce every 8192 steps)
+// it runs ~2.4x the scalar simulator. The result is statistically identical and is
+// cross-checked against the scalar MC and the exact DP -- including the full score
+// pmf bin-by-bin. Non-ARM builds fall back to the scalar simulator.
 #pragma once
 #include "flip7_core.hpp"
 #include "flip7_dp.hpp"
@@ -72,11 +75,14 @@ inline MCResult monte_carlo_solitaire_neon(const SolitaireTurnDP& dp, uint64_t n
     rngA.seed(seed);
     rngB.seed(seed ^ 0xD1B54A32D192ED03ULL);
 
-    uint16_t basev[kNumValues];
-    for (int v = 0; v < kNumValues; ++v) basev[v] = (uint16_t)numberCount(v);
+    // Full-deck position -> (value | first-copy-flag << 4). 79 bytes = one cache line.
+    uint8_t lut[kNumberDeckSize];
+    { int k = 0;
+      for (int v = 0; v < kNumValues; ++v)
+          for (int c = 0, cc = numberCount(v); c < cc; ++c)
+              lut[k++] = (uint8_t)(v | (c == 0 ? 0x10 : 0)); }
 
     const uint16x8_t one = vdupq_n_u16(1);
-    const uint16x8_t v79 = vdupq_n_u16(kNumberDeckSize);
     const uint16x8_t v7  = vdupq_n_u16(kFlip7Target);
     const uint16x8_t v15 = vdupq_n_u16(kFlip7Bonus);
 
@@ -106,10 +112,8 @@ inline MCResult monte_carlo_solitaire_neon(const SolitaireTurnDP& dp, uint64_t n
     for (int step = 0;; ++step) {
         if ((step & 8191) == 0) { flush(); if (completed >= n) break; }
 
-        // Remaining-deck size and the Hit/Stay decision, from the pre-draw mask.
-        const uint16x8_t T = vsubq_u16(v79, pop);            // cards left = 79 - popcount
-
-        uint16_t hm[8]; vst1q_u16(hm, mask);                 // policy gather (8 scalar loads)
+        // Hit/Stay decision from the pre-draw mask (policy gather, 8 scalar loads).
+        uint16_t hm[8]; vst1q_u16(hm, mask);
         const uint16_t hv[8] = {
             (uint16_t)(dp.hit[hm[0]] ? 0xFFFFu : 0), (uint16_t)(dp.hit[hm[1]] ? 0xFFFFu : 0),
             (uint16_t)(dp.hit[hm[2]] ? 0xFFFFu : 0), (uint16_t)(dp.hit[hm[3]] ? 0xFFFFu : 0),
@@ -117,41 +121,35 @@ inline MCResult monte_carlo_solitaire_neon(const SolitaireTurnDP& dp, uint64_t n
             (uint16_t)(dp.hit[hm[6]] ? 0xFFFFu : 0), (uint16_t)(dp.hit[hm[7]] ? 0xFFFFu : 0) };
         const uint16x8_t hit = vld1q_u16(hv);
 
-        // Unbiased bounded draw r in [0,T): (rand32 * T) >> 32 per lane (bias < 2^-25).
+        // Draw a uniform full-deck position k in [0,79): (rand32 * 79) >> 32.
         const uint32x4_t rA = rngA.next(), rB = rngB.next();
-        const uint32x4_t Tlo = vmovl_u16(vget_low_u16(T)), Thi = vmovl_u16(vget_high_u16(T));
-        const uint32x4_t rlo = vcombine_u32(
-            vshrn_n_u64(vmull_u32(vget_low_u32(rA),  vget_low_u32(Tlo)),  32),
-            vshrn_n_u64(vmull_u32(vget_high_u32(rA), vget_high_u32(Tlo)), 32));
-        const uint32x4_t rhi = vcombine_u32(
-            vshrn_n_u64(vmull_u32(vget_low_u32(rB),  vget_low_u32(Thi)),  32),
-            vshrn_n_u64(vmull_u32(vget_high_u32(rB), vget_high_u32(Thi)), 32));
-        const uint16x8_t r = vcombine_u16(vmovn_u32(rlo), vmovn_u32(rhi));
+        const uint32x4_t klo = vcombine_u32(
+            vshrn_n_u64(vmull_n_u32(vget_low_u32(rA),  (uint32_t)kNumberDeckSize), 32),
+            vshrn_n_u64(vmull_n_u32(vget_high_u32(rA), (uint32_t)kNumberDeckSize), 32));
+        const uint32x4_t khi = vcombine_u32(
+            vshrn_n_u64(vmull_n_u32(vget_low_u32(rB),  (uint32_t)kNumberDeckSize), 32),
+            vshrn_n_u64(vmull_n_u32(vget_high_u32(rB), (uint32_t)kNumberDeckSize), 32));
+        const uint16x8_t k = vcombine_u16(vmovn_u32(klo), vmovn_u32(khi));
 
-        // Categorical decode: pick value v whose cumulative remaining range holds r.
-        // Running-remainder trick: keep rr = r - cum_excl[v] (and msh = mask>>v), so
-        // "cum<=r<cum+rem" collapses to one unsigned compare rr<rem (rr underflows to
-        // a huge value past the match, killing later compares; rem==0 self-skips).
-        uint16x8_t rr = r, msh = mask, drawn = vdupq_n_u16(0);
-        for (int v = 0; v < kNumValues; ++v) {
-            const uint16x8_t rem = vsubq_u16(vdupq_n_u16(basev[v]), vandq_u16(msh, one));
-            const uint16x8_t inr = vcltq_u16(rr, rem);
-            drawn = vaddq_u16(drawn, vandq_u16(inr, vdupq_n_u16((uint16_t)v)));
-            rr  = vsubq_u16(rr, rem);
-            msh = vshrq_n_u16(msh, 1);
-        }
-
-        const uint16x8_t bit   = vshlq_u16(one, vreinterpretq_s16_u16(drawn));   // 1<<v
-        const uint16x8_t dup   = vtstq_u16(mask, bit);                           // duplicate => bust
-        const uint16x8_t add   = vbicq_u16(hit, dup);                            // Hit and not a dup
-        score = vaddq_u16(score, vandq_u16(add, drawn));
-        mask  = vorrq_u16(mask, vandq_u16(add, bit));
-        pop   = vsubq_u16(pop, add);                                             // popcount + (added?1:0)
-        const uint16x8_t flip7 = vceqq_u16(pop, v7);
+        // LUT gather: position -> value and first-copy flag (8 loads, one cache line).
+        uint16_t kk[8]; vst1q_u16(kk, k);
+        const uint16_t ev[8] = { lut[kk[0]], lut[kk[1]], lut[kk[2]], lut[kk[3]],
+                                 lut[kk[4]], lut[kk[5]], lut[kk[6]], lut[kk[7]] };
+        const uint16x8_t e       = vld1q_u16(ev);
+        const uint16x8_t vval    = vandq_u16(e, vdupq_n_u16(0x0F));               // drawn value
+        const uint16x8_t isFirst = vtstq_u16(e, vdupq_n_u16(0x10));               // first copy? (full-width predicate)
+        const uint16x8_t bit     = vshlq_u16(one, vreinterpretq_s16_u16(vval));   // 1<<v
+        const uint16x8_t inMask  = vtstq_u16(mask, bit);                          // value already held?
+        const uint16x8_t reserved= vandq_u16(isFirst, inMask);                    // the held copy -> redraw (no-op)
 
         const uint16x8_t stay   = vmvnq_u16(hit);
-        const uint16x8_t busted = vandq_u16(hit, dup);
-        const uint16x8_t f7end  = vandq_u16(add, flip7);
+        const uint16x8_t actv   = vbicq_u16(hit, reserved);   // Hit and the draw is a real remaining card
+        const uint16x8_t busted = vandq_u16(actv, inMask);    // another copy of a held value -> bust
+        const uint16x8_t addL   = vbicq_u16(actv, inMask);    // a new value -> keep it
+        score = vaddq_u16(score, vandq_u16(addL, vval));
+        mask  = vorrq_u16(mask, vandq_u16(addL, bit));
+        pop   = vsubq_u16(pop, addL);                         // popcount + (added?1:0)
+        const uint16x8_t f7end  = vandq_u16(addL, vceqq_u16(pop, v7));
         const uint16x8_t ended  = vorrq_u16(stay, vorrq_u16(busted, f7end));
 
         uint16x8_t fin = vaddq_u16(score, vandq_u16(f7end, v15));   // +15 on Flip 7

@@ -271,21 +271,22 @@ rather than `mt19937`, and partial Fisher–Yates. Every program prints timing a
 throughput.
 
 **NEON-vectorized Monte-Carlo** (`include/flip7_sim_neon.hpp`): the numbers-only
-rollout doesn't actually need a physical deck — given the held mask `S` (popcount
-`p`), the next card is value `v` with probability `(count(v) − [v∈S]) / (79 − p)`,
-the *same* draw-without-replacement conditional the exact DP uses. Dropping the
-deck makes the whole rollout state a 13-bit mask, so we run **8 independent
-rollouts in lockstep** (`uint16x8`, one per lane) with per-lane alive predicates
-and persistent lane refill, a vectorized xoshiro128++×8, an unbiased 32-bit Lemire
-bound, and a branchless 13-step categorical decode. It is a *different sampler*
-(not a bit-for-bit replay of the scalar deck), but provably the *same distribution*
-— verified by matching the exact score pmf bin-by-bin to **max deviation 6×10⁻⁵**
-across all 79 bins, plus the exact DP's mean/bust/Flip-7. Net **~1.8× over the
-already-fast scalar simulator** (13 → 7 ns/rollout); the floor is the O(13)
-categorical decode that replaces the scalar's O(1) deck pop, trimmed with a
-running-remainder trick (one unsigned compare per value instead of two), an
-incrementally-tracked popcount, and deferred horizontal reductions. Multithreading
-across games is the remaining lever (see `PLAN.md`).
+rollout doesn't actually need a physical deck — the held mask `S` (popcount `p`)
+fully determines the remaining 79-card deck, so we run **8 independent rollouts in
+lockstep** (`uint16x8`, one per lane) with per-lane alive predicates and persistent
+lane refill, and a vectorized xoshiro128++×8. The next card is drawn by **rejection
+over the full deck**: a uniform position `k ∈ [0,79)`, its `(value, first-copy
+flag)` from a 79-byte LUT (one cache line), with each held value's single reserved
+first-copy position treated as a no-op redraw — any other copy of a held value is a
+bust, a copy of an unheld value is kept. That reproduces draw-without-replacement
+exactly with one small gather instead of a 13-step categorical decode. It is a
+*different sampler* (not a bit-for-bit replay of the scalar deck), but provably the
+*same distribution* — verified by matching the exact score pmf bin-by-bin to **max
+deviation < 10⁻⁴** across all 79 bins, plus the exact DP's mean/bust/Flip-7. Net
+**~2.4× over the already-fast scalar simulator** (13 → ~5.5 ns/rollout), via the
+LUT gather, an incrementally-tracked popcount, and deferred horizontal reductions
+(folded to scalars every 8192 steps). Multithreading across games is the remaining
+lever (see `PLAN.md`).
 
 ### PMU profiling (`make profile`)
 
@@ -301,7 +302,7 @@ IPC and per-op cost plus stall sources. On the M4 Pro:
 | dense DPs (numbers, +mods) | 44–215 ns/state | 3.0–4.0 | ~0 | ~0 | **compute** (healthy) |
 | hashed DP (+Second Chance) | 157 ns/state | 1.95 | **31.4** | **10.9** | **TLB** (random hash probes) |
 | MC numbers / +mods | 13–16 ns/roll | 3.6–3.8 | ~0 | ~0 | **compute** (healthy) |
-| MC numbers (NEON ×8) | ~7.0 ns/roll | — | ~0 | ~0 | **~1.8×** vs scalar (8 lockstep lanes) |
+| MC numbers (NEON ×8) | ~5.5 ns/roll | — | ~0 | ~0 | **~2.4×** vs scalar (8 lockstep lanes) |
 | MC +Second Chance | 57 ns/roll | 1.87 | 21.1 | 4.4 | hash policy lookup per decision |
 | xoshiro256++ next / bounded | 0.7–0.8 ns | 4.9–6.3 | 0 | 0 | not a bottleneck |
 | `round_solve` (Ch.4 inner) | 47 µs/solve | 3.63 | 0.3 | 0.1 | **compute** (full 8K-state re-solve) |

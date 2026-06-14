@@ -13,7 +13,10 @@
 #include "flip7_core.hpp"
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 namespace flip7 {
@@ -309,6 +312,171 @@ struct SolitaireFullDP {
     uint8_t policy(uint16_t nm, uint16_t mm, int sch, int scn, uint32_t extra) const {
         const size_t i = slotOf(pack(nm, mm, sch, scn, extra));
         return (hkey[i] != kEmpty) ? hpol[i] : 0;
+    }
+    double load_factor() const { return (double)states_evaluated / (double)cap; }
+};
+
+// =============================================================================
+// Stage b complete: ALL 94 cards, solitaire (self-targeted action cards).
+//
+// Adds Freeze (3) and Flip Three (3) to the deck. Self-targeted:
+//   Freeze     -- forced immediate Stay (bank current hand). If drawn DURING a
+//                 Flip Three, it is set aside and resolved (Stay) only after the
+//                 forced draws complete.
+//   Flip Three -- forced to draw the next 3 cards with no Stay option. A bust or
+//                 a 7th unique number ends the turn early. A Flip Three drawn
+//                 during the sequence stacks (+3 forced draws).
+//
+// New state beyond SolitaireFullDP: flip3_seen (0..3), freeze_seen (0..3, only
+// nonzero mid-forced-sequence => a Freeze is pending), and forced (0..7 = forced
+// draws remaining; 0 = free Hit/Stay decision). A save still removes the
+// duplicate, so every transition adds exactly one drawn card -> acyclic.
+//
+// Key: nm(13)|mm(6)|sc_held(1)|sc_seen(2)|extra(26)|flip3(2)|freeze(2)|forced(3).
+// =============================================================================
+struct SolitaireAllDP {
+    static constexpr int kDeckTotal = 94;
+    static constexpr uint64_t kEmpty   = ~0ull;            // sentinel: never a real key|pol word
+    static constexpr uint64_t kKeyMask = (1ull << 55) - 1; // key in bits 0..54; policy in bit 63
+
+    // Key and value co-located so each probe touches ONE cache line, not three.
+    struct Slot { uint64_t k; double v; };
+
+    // Analytic state-count estimate (base configs 21,980,032 x 55 action-card
+    // modes) used only to render progress % and ETA.
+    static constexpr double kEstTotal = 1.2089e9;
+
+    size_t cap, mask_, guard_limit;
+    std::vector<Slot> tab;
+    long states_evaluated = 0;
+    bool verbose = true;
+    std::chrono::steady_clock::time_point t_start;
+
+    explicit SolitaireAllDP(size_t capacity_pow2 = (size_t(1) << 31))
+        : cap(capacity_pow2), mask_(capacity_pow2 - 1),
+          guard_limit((size_t)((double)capacity_pow2 * 0.9)),
+          tab(capacity_pow2, Slot{kEmpty, 0.0}) {}
+
+    static uint64_t mix(uint64_t x) {
+        x ^= x >> 33; x *= 0xff51afd7ed558ccdULL;
+        x ^= x >> 33; x *= 0xc4ceb9fe1a85ec53ULL;
+        x ^= x >> 33; return x;
+    }
+    static uint64_t pack(uint16_t nm, uint16_t mm, int sch, int scn, uint32_t extra,
+                         int f3, int fz, int forced) {
+        return (uint64_t)nm | ((uint64_t)mm << 13) | ((uint64_t)sch << 19)
+             | ((uint64_t)scn << 20) | ((uint64_t)extra << 22)
+             | ((uint64_t)f3 << 48) | ((uint64_t)fz << 50) | ((uint64_t)forced << 52);
+    }
+    static int      extraOf(uint32_t e, int v)         { return (e >> (2 * v)) & 3u; }
+    static uint32_t setExtra(uint32_t e, int v, int c) {
+        return (e & ~(3u << (2 * v))) | ((uint32_t)c << (2 * v));
+    }
+
+    double solve(uint16_t nm, uint16_t mm, int sch, int scn, uint32_t extra,
+                 int f3, int fz, int forced) {
+        const uint64_t key = pack(nm, mm, sch, scn, extra, f3, fz, forced);
+        size_t slot = mix(key) & mask_;          // probe once; remember the first empty slot
+        for (;;) {
+            const uint64_t k = tab[slot].k;
+            if (k == kEmpty) break;
+            if ((k & kKeyMask) == key) return tab[slot].v;
+            slot = (slot + 1) & mask_;
+        }
+        const int pcn = maskPop(nm);
+        double val;
+        uint8_t pol = 0;
+        if (pcn == kFlip7Target) {
+            val = (double)fullScore(nm, mm);                 // Flip 7 reached
+        } else if (forced == 0 && fz >= 1) {
+            val = (double)fullScore(nm, mm);                 // pending Freeze resolves -> Stay
+        } else {
+            const bool free = (forced == 0);
+            int E = 0;
+            for (int v = 2; v <= 12; ++v) E += extraOf(extra, v);
+            const int T = kDeckTotal - (pcn + E + maskPop(mm) + scn + f3 + fz);
+            const int nf_non = free ? 0 : (forced - 1);      // forced count after a non-FlipThree draw
+            const int nf_f3  = free ? 3 : (forced - 1 + 3);  // after a Flip Three draw
+            double ev = 0.0;
+            for (int v = 0; v < kNumValues; ++v) {
+                const uint16_t bit = (uint16_t)(1u << v);
+                const int r = numberCount(v) - (int)((nm >> v) & 1) - extraOf(extra, v);
+                if (nm & bit) {                              // duplicate
+                    if (r > 0 && sch) {                      // save: remove duplicate
+                        const double p = (double)r / (double)T;
+                        ev += p * solve(nm, mm, 0, scn, setExtra(extra, v, extraOf(extra, v) + 1), f3, fz, nf_non);
+                    }
+                } else {
+                    const double p = (double)r / (double)T;
+                    const uint16_t nn = (uint16_t)(nm | bit);
+                    if (maskPop(nn) == kFlip7Target) ev += p * (double)fullScore(nn, mm);
+                    else                             ev += p * solve(nn, mm, sch, scn, extra, f3, fz, nf_non);
+                }
+            }
+            for (int i = 0; i < kNumModifiers; ++i) {
+                const uint16_t bit = (uint16_t)(1u << i);
+                if (mm & bit) continue;
+                ev += (1.0 / (double)T) * solve(nm, (uint16_t)(mm | bit), sch, scn, extra, f3, fz, nf_non);
+            }
+            if (scn < kNumSecondChance)
+                ev += ((double)(kNumSecondChance - scn) / (double)T)
+                      * solve(nm, mm, 1, scn + 1, extra, f3, fz, nf_non);
+            if (f3 < 3)
+                ev += ((double)(3 - f3) / (double)T)
+                      * solve(nm, mm, sch, scn, extra, f3 + 1, fz, nf_f3);
+            if (fz < 3) {
+                const double p = (double)(3 - fz) / (double)T;
+                if (free) ev += p * (double)fullScore(nm, mm);                    // forced Stay (terminal)
+                else      ev += p * solve(nm, mm, sch, scn, extra, f3, fz + 1, nf_non);  // pending
+            }
+            if (free) {
+                const double ev_stay = (double)fullScore(nm, mm);
+                if (ev > ev_stay) { val = ev;      pol = 1; }
+                else              { val = ev_stay; pol = 0; }
+            } else {
+                val = ev;  // forced: no Stay option
+            }
+        }
+        if ((size_t)states_evaluated >= guard_limit) {     // never let the table fill
+            fprintf(stderr, "FATAL: SolitaireAllDP hash full (%ld states, cap %zu) -- raise capacity\n",
+                    states_evaluated, cap);
+            std::fflush(stderr);
+            std::abort();
+        }
+        while (tab[slot].k != kEmpty) slot = (slot + 1) & mask_;  // resume from the saved empty slot
+        tab[slot].k = key | ((uint64_t)pol << 63);
+        tab[slot].v = val;
+        ++states_evaluated;
+        if (verbose && (states_evaluated & 0xFFFFFF) == 0) {      // ~ every 16.7M
+            const double el = std::chrono::duration<double>(
+                                  std::chrono::steady_clock::now() - t_start).count();
+            const double rate = states_evaluated / (el > 0 ? el : 1);
+            const double pct  = 100.0 * states_evaluated / kEstTotal;
+            const double eta  = rate > 0 ? (kEstTotal - states_evaluated) / rate : 0;
+            fprintf(stderr,
+                    "  [SolitaireAllDP] %ld M / ~%.0fM (%.0f%%)  %.1f M/s  elapsed %.0fs  "
+                    "ETA ~%.0fs  load %.2f\n",
+                    states_evaluated / 1000000, kEstTotal / 1e6, pct, rate / 1e6,
+                    el, eta < 0 ? 0 : eta, load_factor());
+            std::fflush(stderr);
+        }
+        return val;
+    }
+
+    double optimal() {
+        t_start = std::chrono::steady_clock::now();
+        return solve(0, 0, 0, 0, 0, 0, 0, 0);
+    }
+
+    uint8_t policy(uint16_t nm, uint16_t mm, int sch, int scn, uint32_t extra, int f3) const {
+        const uint64_t key = pack(nm, mm, sch, scn, extra, f3, 0, 0);  // free states only
+        size_t i = mix(key) & mask_;
+        for (;;) {
+            const uint64_t k = tab[i].k;
+            if (k == kEmpty) return 0;
+            if ((k & kKeyMask) == key) return (uint8_t)(k >> 63);
+            i = (i + 1) & mask_;
+        }
     }
     double load_factor() const { return (double)states_evaluated / (double)cap; }
 };

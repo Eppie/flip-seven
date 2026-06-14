@@ -50,6 +50,7 @@ results are **exact** and Monte-Carlo confirmed.
 | numbers only (79) | 18.5652 | z = +0.5σ ✓ |
 | + modifiers (85) | **20.2291** | 20.2296 (z = +0.2σ) ✓ |
 | + Second Chance (88) | **22.2504** | 22.2531 (z = +1.1σ) ✓ |
+| + Freeze + Flip Three (94, all cards) | **20.2980** | 20.2990 (z = +0.4σ) ✓ |
 
 Modifiers are one-of-each and cannot bust, so the held hand determines the deck —
 a dense exact DP (`×2` doubles the number total only, not the +N modifiers or the
@@ -61,19 +62,35 @@ removes a card, the state graph is acyclic. That state is sparse, so the full
 solver memoizes in a flat open-addressing hash map (≈22M states, ~3 s) rather than
 a dense array. Every result uses the exact game rules.
 
+**All 94 cards (solitaire).** Freeze and Flip Three are self-targeted: Freeze
+forces an immediate Stay, Flip Three forces 3 draws (a bust or 7th unique ends it
+early; further Flip Threes stack; a Freeze drawn during it is pending and Stays
+after). These **lower** the optimal expected score (22.2504 → **20.2980**, −1.95):
+Freeze caps your upside (you freeze ~12% of turns) and Flip Three forces risky
+draws (~11%). The exact DP adds a forced-draw counter and a pending-freeze flag,
+which multiply the state space to **1,208,732,216 states** — solved in ~5.3 min
+using a 34 GB open-addressing table. This count is not a surprise: it factors as
+**21,980,032 base configs × 55 action-card "modes"** (an upper bound of
+1,208,901,760), and the measured value is lower by just 0.014% — i.e. on average
+54.99 of the 55 modes are reachable per config. Because of its size this DP is
+opt-in (`make all-cards` / `make test-all-cards`), separate from the fast suite.
+
 ## Build & run
 
 Requires a C++20 compiler (tested with Apple Clang on an Apple M4 Pro; the
 Makefile auto-detects the best `-mcpu`).
 
 ```sh
-make          # build chapter binaries + tests
-make run      # print the headline numbers (Chapter 1 + Stage b)
-make test     # assert them (DP<->MC agreement + regression)
+make            # build all binaries + tests
+make run        # fast headline numbers (numbers, +modifiers, +Second Chance)
+make test       # assert them (DP<->MC agreement + regression)
+make all-cards  # the full 94-card solitaire DP (~5 min, ~34 GB) -- opt-in
+make test-all-cards
 ```
 
 `./bin/ch1_solitaire_turn [num_rollouts] [seed]` and
 `./bin/ch1b_modifiers_sc [num_rollouts] [seed]` to vary the Monte-Carlo runs.
+The full solve streams live progress (states, %, rate, ETA) to stderr.
 
 ## Methods
 
@@ -111,8 +128,10 @@ exact results, not to produce them.
 
 ## Status
 
-Chapter 1, including Stage b (modifiers + Second Chance), is complete and verified
-— all exact, all Monte-Carlo confirmed. Chapters 2–5 — separability, tail
-probabilities, the first-to-200 win-probability DP and Nash equilibrium via
-fictitious play, and adversarial action-card targeting — are specified in
-`PLAN.md` and not yet implemented.
+The complete single solitaire turn is solved exactly for **all 94 cards**
+(numbers, modifiers, Second Chance, Freeze, Flip Three) and Monte-Carlo confirmed.
+Action cards are self-targeted here; their *adversarial* targeting is the
+multiplayer problem (Chapter 5). Chapters 2–5 — separability, tail probabilities,
+the first-to-200 win-probability DP and Nash equilibrium via fictitious play, and
+adversarial action-card targeting — are specified in `PLAN.md` and not yet
+implemented.

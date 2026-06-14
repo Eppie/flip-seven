@@ -21,7 +21,7 @@ static double secs(clk::time_point a, clk::time_point b) {
 }
 
 int main(int argc, char** argv) {
-    uint64_t N = 50'000'000ULL;
+    uint64_t N = 200'000'000ULL;  // higher count -> smoother round-score pmf for Chapter 4
     uint64_t seed = 0xF117ULL;
     if (argc > 1) N = strtoull(argv[1], nullptr, 10);
     if (argc > 2) seed = strtoull(argv[2], nullptr, 10);
@@ -49,13 +49,25 @@ int main(int argc, char** argv) {
            dp_all.states_evaluated, secs(t0, t1), dp_all.load_factor());
 
     auto m0 = clk::now();
-    const MCFullResult mc = monte_carlo_all(dp_all, N, seed);
+    static double hist[256] = {0};
+    const MCFullResult mc = monte_carlo_all(dp_all, N, seed, hist);
     const double sec = secs(m0, clk::now());
     const double z = (mc.mean - opt_all) / mc.stderr_;
     printf("[MC] mean=%.6f (se %.6f)  mean-DP=%+.6f (z=%+.2f)\n", mc.mean, mc.stderr_, mc.mean - opt_all, z);
     printf("[MC] bust/flip7/stay = %.4f / %.5f / %.4f   (froze %.4f, flip3 %.4f, saved %.4f)\n",
            mc.p_bust, mc.p_flip7, mc.p_stay, mc.p_froze, mc.p_flip3, mc.p_saved);
     printf("[MC] %.1f M rollouts/s\n\n", N / sec / 1e6);
+
+    // Persist the round-score distribution under the exact optimal policy for the
+    // competitive (Chapter 4) analysis.
+    if (FILE* f = std::fopen("data/round_pmf_all94.txt", "w")) {
+        std::fprintf(f, "# Flip 7 all-94 round-score pmf under the exact optimal solitaire policy\n");
+        std::fprintf(f, "# (Monte-Carlo, %llu rollouts; score probability)\n", (unsigned long long)N);
+        for (int s = 0; s < 256; ++s)
+            if (hist[s] > 0) std::fprintf(f, "%d %.10f\n", s, hist[s] / (double)N);
+        std::fclose(f);
+        printf("[pmf] wrote data/round_pmf_all94.txt\n");
+    }
 
     printf("--- E[round score] progression (single solitaire turn, exact) ---\n");
     printf("  numbers only            : %.4f\n", opt_num);

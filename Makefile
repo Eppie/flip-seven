@@ -31,6 +31,7 @@ CH2  := $(BIN)/ch2_separability
 CH3  := $(BIN)/ch3_tails
 CH4  := $(BIN)/ch4_competitive
 ALL  := $(BIN)/solitaire_all_cards
+PROF := $(BIN)/profile
 TST1 := $(BIN)/test_ch1
 TST1B:= $(BIN)/test_ch1b
 TST2 := $(BIN)/test_ch2
@@ -38,7 +39,7 @@ TST3 := $(BIN)/test_ch3
 TST4 := $(BIN)/test_ch4
 TSTA := $(BIN)/test_all_cards
 
-all: $(CH1) $(CH1B) $(CH2) $(CH3) $(CH4) $(ALL) $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TSTA)
+all: $(CH1) $(CH1B) $(CH2) $(CH3) $(CH4) $(ALL) $(PROF) $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TSTA)
 	@echo "built with: $(CXX) $(MCPU)"
 
 $(BIN):
@@ -61,6 +62,10 @@ $(CH4): ch4_competitive/main.cpp $(HDRS) | $(BIN)
 
 $(ALL): solitaire_all_cards/main.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
+
+# PMU profiler: vendored third_party/perf.h (Apple Silicon kperf, dlopen'd).
+$(PROF): perf/profile.cpp $(HDRS) third_party/perf.h | $(BIN)
+	$(CXX) $(CXXFLAGS) -Ithird_party -o $@ $<
 
 $(TST1): tests/test_ch1.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
@@ -108,6 +113,11 @@ test: $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4)
 competitive: $(CH4)
 	./$(CH4)
 
+# PMU profiling of the hot kernels (needs root to program counters).
+profile: $(PROF)
+	@echo "run 'sudo ./$(PROF)' for PMU counters; without root only wall-time prints."
+	./$(PROF)
+
 all-cards: $(ALL)
 	./$(ALL)
 
@@ -117,4 +127,4 @@ test-all-cards: $(TSTA)
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all run test competitive all-cards test-all-cards clean
+.PHONY: all run test competitive profile all-cards test-all-cards clean

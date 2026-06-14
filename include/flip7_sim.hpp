@@ -228,7 +228,8 @@ inline MCFullResult monte_carlo_full(const SolitaireFullDP& dp, uint64_t n, uint
 // --- All 94 cards, solitaire (self-targeted Freeze / Flip Three) -------------
 // Card codes: 0..12 numbers, 13..18 modifiers, 19 = Second Chance,
 // 20 = Flip Three, 21 = Freeze. Mirrors SolitaireAllDP exactly.
-inline MCFullResult monte_carlo_all(const SolitaireAllDP& dp, uint64_t n, uint64_t seed) {
+inline MCFullResult monte_carlo_all(const SolitaireAllDP& dp, uint64_t n, uint64_t seed,
+                                    double* hist /*[256], optional*/ = nullptr) {
     Xoshiro256pp rng;
     rng.seed(seed);
     const int total = SolitaireAllDP::kDeckTotal;  // 94
@@ -291,6 +292,7 @@ inline MCFullResult monte_carlo_all(const SolitaireAllDP& dp, uint64_t n, uint64
         if (didsave)  ++saved;
         if (didfroze) ++froze;
         if (didflip3) ++flip3;
+        if (hist) hist[(int)score]++;
         sum += score;
         sumsq += score * score;
     }

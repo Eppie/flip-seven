@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 using namespace flip7;
 
@@ -19,10 +20,9 @@ static bool close(double a, double b, double tol) { return std::fabs(a - b) <= t
 
 int main() {
     printf("Chapter 4 tests\n");
-    double D[kRoundScoreMax + 1];
-    round_pmf(D);
+    std::vector<double> D = round_pmf_numbers();
     double tot = 0, mean = 0;
-    for (int s = 0; s <= kRoundScoreMax; ++s) { tot += D[s]; mean += s * D[s]; }
+    for (int s = 0; s < (int)D.size(); ++s) { tot += D[s]; mean += s * D[s]; }
     check(close(tot, 1.0, 1e-9), "round pmf sums to 1");
     check(close(mean, 18.5652176, 1e-4), "round pmf mean == 18.5652");
 

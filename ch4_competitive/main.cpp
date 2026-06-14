@@ -23,91 +23,41 @@
 using namespace flip7;
 
 static constexpr int kT = 200;  // target
+// The within-round solver (init_round_tables / round_solve / round_dist) lives
+// in flip7_compete.hpp so both this program and the profiler can use it.
 
-// ---- within-round solver with an arbitrary terminal reward g[round_score] ----
-static int    g_sum[1 << kNumValues], g_pc[1 << kNumValues];
-static double g_bustnum[1 << kNumValues];  // sum over held v of (count(v)-1)
-static std::vector<int> g_order;           // states by popcount descending
-static void init_round_tables() {
-    for (uint32_t S = 0; S < (1u << kNumValues); ++S) {
-        g_sum[S] = maskSum((uint16_t)S);
-        g_pc[S]  = maskPop((uint16_t)S);
-        double b = 0;
-        for (int v = 0; v < kNumValues; ++v) if (S & (1u << v)) b += numberCount(v) - 1;
-        g_bustnum[S] = b;
-    }
-    g_order.resize(1 << kNumValues);
-    for (uint32_t S = 0; S < (1u << kNumValues); ++S) g_order[S] = (int)S;
-    std::sort(g_order.begin(), g_order.end(), [](int a, int b) { return g_pc[a] > g_pc[b]; });
-}
-// max E[g(round score)]; fills hit[] policy if non-null. U is a scratch buffer.
-static double round_solve(const double* g, double* U, uint8_t* hit) {
-    const double g0 = g[0];
-    for (int S : g_order) {
-        const int pc = g_pc[S];
-        if (pc == kFlip7Target) { U[S] = g[g_sum[S] + kFlip7Bonus]; continue; }
-        const double stay = g[g_sum[S]];
-        double acc = g_bustnum[S] * g0;
-        for (unsigned nm = (~(unsigned)S) & 0x1FFFu; nm; nm &= nm - 1) {  // iterate undrawn values only
-            const int v = __builtin_ctz(nm);
-            acc += (double)numberCount(v) * U[S | (1u << v)];
-        }
-        const double hv = acc / (double)(kNumberDeckSize - pc);
-        if (hv > stay) { U[S] = hv;  if (hit) hit[S] = 1; }
-        else           { U[S] = stay; if (hit) hit[S] = 0; }
-    }
-    return U[0];
-}
-// Round-score pmf realized by a given within-round policy hit[].
-static void round_dist(const uint8_t* hit, double* outD) {
-    for (int s = 0; s <= kRoundScoreMax; ++s) outD[s] = 0.0;
-    std::vector<double> reach(1 << kNumValues, 0.0);
-    reach[0] = 1.0;
-    for (int pc = 0; pc < kFlip7Target; ++pc)
-        for (uint32_t S = 0; S < (1u << kNumValues); ++S) {
-            if (g_pc[S] != pc) continue;
-            const double pr = reach[S];
-            if (pr == 0.0) continue;
-            if (!hit[S]) { outD[g_sum[S]] += pr; continue; }
-            const int T = kNumberDeckSize - pc;
-            double bust = 0;
-            for (int v = 0; v < kNumValues; ++v) if (S & (1u << v)) bust += numberCount(v) - 1;
-            outD[0] += pr * bust / (double)T;
-            for (int v = 0; v < kNumValues; ++v) {
-                const uint16_t bit = (uint16_t)(1u << v);
-                if (S & bit) continue;
-                const double pv = pr * (double)numberCount(v) / (double)T;
-                const uint16_t Sn = (uint16_t)(S | bit);
-                if (g_pc[Sn] == kFlip7Target) outD[g_sum[Sn] + kFlip7Bonus] += pv;
-                else                          reach[Sn] += pv;
-            }
-        }
+// A/B/C for a given round-score distribution; prints headline win-prob numbers.
+static void competitive_summary(const char* label, const std::vector<double>& D, int kT) {
+    double tot = 0, mean = 0;
+    for (int s = 0; s < (int)D.size(); ++s) { tot += D[s]; mean += s * D[s]; }
+    const double er = expected_rounds_to_target(D, kT);
+    const auto Wg = win_prob_greedy(D, kT);
+    auto wg = [&](int a, int b) { return Wg[(size_t)a * kT + b]; };
+    printf("[%s] round mean=%.4f  P(bust)=%.5f\n", label, mean, D[0]);
+    printf("    B. expected greedy rounds to 200 = %.4f\n", er);
+    printf("    C. W(0,0)=%.6f (sym 0.5);  ~1-round lead worth: early(+18)=%.4f mid(118,100)=%.4f late(180,162)=%.4f\n",
+           wg(0, 0), wg(std::max(1, (int)mean), 0), wg(118, 100), wg(180, 162));
 }
 
 int main() {
-    printf("=== Flip 7 - Chapter 4: competitive first-to-200 (numbers-only model) ===\n\n");
+    printf("=== Flip 7 - Chapter 4: competitive first-to-200 ===\n\n");
     init_round_tables();
 
-    double D[kRoundScoreMax + 1];
-    round_pmf(D);
+    std::vector<double> D = round_pmf_numbers();
     const auto sup = pmf_support(D);
 
-    // ---- A / B / C ----
-    double tot = 0, mean = 0;
-    for (int s = 0; s <= kRoundScoreMax; ++s) { tot += D[s]; mean += s * D[s]; }
-    printf("A. round-score pmf: sum=%.10f mean=%.6f P(bust)=%.5f\n", tot, mean, D[0]);
-
-    const double er = expected_rounds_to_target(D, kT);
-    printf("B. expected greedy rounds to reach 200 = %.4f\n", er);
-
+    // ---- A / B / C for both card sets ----
+    printf("--- A/B/C: across-rounds win probabilities (both players greedy) ---\n");
+    competitive_summary("numbers only ", D, kT);
+    std::vector<double> Dall = load_pmf("data/round_pmf_all94.txt");
+    if (!Dall.empty()) competitive_summary("ALL 94 cards ", Dall, kT);
+    else printf("[ALL 94 cards] data/round_pmf_all94.txt missing -- run 'make all-cards' to generate it.\n");
+    printf("\n");
     const auto Wg = win_prob_greedy(D, kT);
     auto wg = [&](int a, int b) { return Wg[(size_t)a * kT + b]; };
-    printf("C. 2-player win prob, both greedy: W(0,0)=%.6f (sym check 0.5)\n", wg(0, 0));
-    printf("   value of an ~18-pt lead: early (18,0)=%.4f, mid (118,100)=%.4f, late (180,162)=%.4f\n\n",
-           wg(18, 0), wg(118, 100), wg(180, 162));
 
-    // ---- D. best response to a greedy field ----
-    printf("D. best response vs a greedy field (re-optimize each round for win prob)\n");
+    // ---- D. best response to a greedy field (numbers-only model) ----
+    printf("--- D. best response vs a greedy field [numbers-only] (re-optimize each round) ---\n");
     // sanity: maximizing E[score] (g = identity) reproduces 18.5652
     {
         std::vector<double> g(kRoundScoreMax + 1), U(1 << kNumValues);

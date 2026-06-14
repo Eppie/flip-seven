@@ -26,9 +26,11 @@ BIN  := bin
 HDRS := $(wildcard include/*.hpp)
 
 CH1  := $(BIN)/ch1_solitaire_turn
+CH1B := $(BIN)/ch1b_modifiers_sc
 TST1 := $(BIN)/test_ch1
+TST1B:= $(BIN)/test_ch1b
 
-all: $(CH1) $(TST1)
+all: $(CH1) $(CH1B) $(TST1) $(TST1B)
 	@echo "built with: $(CXX) $(MCPU)"
 
 $(BIN):
@@ -37,14 +39,24 @@ $(BIN):
 $(CH1): ch1_solitaire_turn/main.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
+$(CH1B): ch1b_modifiers_sc/main.cpp $(HDRS) | $(BIN)
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
 $(TST1): tests/test_ch1.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-run: $(CH1)
-	./$(CH1)
+$(TST1B): tests/test_ch1b.cpp $(HDRS) | $(BIN)
+	$(CXX) $(CXXFLAGS) -o $@ $<
 
-test: $(TST1)
+run: $(CH1) $(CH1B)
+	./$(CH1)
+	@echo
+	./$(CH1B)
+
+test: $(TST1) $(TST1B)
 	./$(TST1)
+	@echo
+	./$(TST1B)
 
 clean:
 	rm -rf $(BIN)

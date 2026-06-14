@@ -85,4 +85,108 @@ inline MCResult monte_carlo_solitaire(const SolitaireTurnDP& dp, uint64_t n, uin
     return r;
 }
 
+// --- Stage b: numbers + modifiers + Second Chance ----------------------------
+// Card codes in the deck: 0..12 numbers, 13..18 modifiers (index = code-13),
+// 19 = Second Chance.
+//
+// Rules::TrueRules  -- a Second Chance save removes the duplicate from the deck
+//                      (the real game).
+// Rules::Idealized  -- a save returns the duplicate to the deck (the DP's model;
+//                      used to confirm the DP math). The two differ only here.
+enum class Rules { TrueRules, Idealized };
+
+struct MCFullResult {
+    double   mean, stddev, stderr_;
+    double   p_bust, p_flip7, p_stay, p_saved;
+    uint64_t n;
+};
+
+inline MCFullResult monte_carlo_full(const SolitaireFullDP& dp, uint64_t n,
+                                     uint64_t seed, Rules rules) {
+    Xoshiro256pp rng;
+    rng.seed(seed);
+    const int total = dp.deck_total;
+
+    uint8_t deck[kNumberDeckSize + kNumModifiers + kNumSecondChance];
+    int idx = 0;
+    for (int v = 0; v < kNumValues; ++v)
+        for (int k = 0, c = numberCount(v); k < c; ++k) deck[idx++] = (uint8_t)v;
+    for (int i = 0; i < kNumModifiers; ++i) deck[idx++] = (uint8_t)(13 + i);
+    for (int i = 0; i < dp.num_sc; ++i)     deck[idx++] = (uint8_t)19;
+    // idx == total
+
+    double sum = 0.0, sumsq = 0.0;
+    long busts = 0, flip7s = 0, stays = 0, saved = 0;
+    int sp[256], sj[256];
+
+    for (uint64_t t = 0; t < n; ++t) {
+        uint16_t nm = 0, mm = 0;
+        int sch = 0, scn = 0, pos = 0, ns = 0;
+        double score = 0.0;
+        bool didsave = false;
+        for (;;) {
+            if (!dp.hit[SolitaireFullDP::enc(nm, mm, sch, scn)]) {
+                score = (double)fullScore(nm, mm);
+                ++stays;
+                break;
+            }
+            const uint64_t j = pos + rng.bounded((uint64_t)(total - pos));
+            { const uint8_t tmp = deck[pos]; deck[pos] = deck[j]; deck[j] = tmp; }
+            sp[ns] = pos;
+            sj[ns] = (int)j;
+            ++ns;
+            const uint8_t card = deck[pos];
+            ++pos;
+            if (card < 13) {  // number
+                const int v = card;
+                const uint16_t bit = (uint16_t)(1u << v);
+                if (nm & bit) {                         // duplicate
+                    if (sch) {                          // Second Chance saves
+                        sch = 0;
+                        didsave = true;
+                        if (rules == Rules::Idealized) --pos;  // return duplicate to deck
+                    } else {                            // bust
+                        score = 0.0;
+                        ++busts;
+                        break;
+                    }
+                } else {
+                    nm |= bit;
+                    if (maskPop(nm) == kFlip7Target) {  // Flip 7
+                        score = (double)fullScore(nm, mm);
+                        ++flip7s;
+                        break;
+                    }
+                }
+            } else if (card < 19) {  // modifier
+                mm |= (uint16_t)(1u << (card - 13));
+            } else {                 // Second Chance
+                ++scn;
+                if (!sch) sch = 1;   // else excess copy discarded
+            }
+        }
+        for (int s = ns - 1; s >= 0; --s) {  // restore fresh deck
+            const uint8_t tmp = deck[sp[s]];
+            deck[sp[s]] = deck[sj[s]];
+            deck[sj[s]] = tmp;
+        }
+        if (didsave) ++saved;
+        sum += score;
+        sumsq += score * score;
+    }
+
+    MCFullResult r;
+    r.n = n;
+    r.mean = sum / (double)n;
+    double var = sumsq / (double)n - r.mean * r.mean;
+    if (var < 0) var = 0;
+    r.stddev = std::sqrt(var);
+    r.stderr_ = std::sqrt(var / (double)n);
+    r.p_bust = (double)busts / (double)n;
+    r.p_flip7 = (double)flip7s / (double)n;
+    r.p_stay = (double)stays / (double)n;
+    r.p_saved = (double)saved / (double)n;
+    return r;
+}
+
 }  // namespace flip7

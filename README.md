@@ -158,8 +158,20 @@ rounds; action-card targeting is deferred to Ch. 5.)
   When far behind it deliberately accepts a **57%** bust risk (vs greedy's 31%) and
   even a *lower* expected score, trading mean for the variance it needs to catch up;
   when ahead it cuts risk to ~21%. The best-response grid is exact, cross-checked by
-  a Monte-Carlo tournament (0.5589 vs 0.5593). Still to come (Ch. 4 cont.): the
-  symmetric Nash equilibrium via fictitious play.
+  a Monte-Carlo tournament (0.5589 vs 0.5593).
+
+- **Symmetric Nash equilibrium** (fictitious self-play, `make nash`, ~3 min): the
+  value is **0.5** by symmetry — and an MC tournament with both players using the
+  converged policy returns **0.49986**, confirming it. The equilibrium *policy* is
+  the same push/safe schedule, slightly *more* polarized than the best-response to
+  greedy (behind 50 → **59%** bust risk; ahead 50 → **17%**; even ≈ greedy), because
+  at equilibrium the opponent adapts too. Notably the stage game is **mixed**
+  (matching-pennies-like: vs an aggressive opponent you play safe to let them bust,
+  vs a safe opponent you push for variance), so randomizing your round-aggression
+  matters — the best *deterministic* round-policy is held to only ~**0.39** against
+  the equilibrium. (Fictitious play converges the policy as ~1/k; the per-iteration
+  pure-best-response value is not a 0.5 signal, since pure play can't mirror a mixed
+  strategy.)
 
 ## Build & run
 
@@ -171,8 +183,10 @@ make            # build all binaries + tests
 make run        # fast headline numbers (Ch.1 progression, Ch.2 strategy, Ch.3 tails)
 make test       # assert them (DP<->MC agreement + regression), incl. Ch.4 A-C
 make competitive  # Ch.4 best-response grid + push/safe + MC (~9 s) -- opt-in
+make nash         # Ch.4 symmetric Nash via fictitious self-play (~3 min) -- opt-in
 make all-cards    # the full 94-card solitaire DP (~5 min, ~34 GB) -- opt-in
 make test-all-cards
+make profile      # PMU profiling (sudo ./bin/profile for counters)
 ```
 
 `./bin/ch1_solitaire_turn [num_rollouts] [seed]` and
@@ -247,7 +261,7 @@ exact results, not to produce them.
 The complete single solitaire turn is solved exactly for **all 94 cards**
 (numbers, modifiers, Second Chance, Freeze, Flip Three) and Monte-Carlo confirmed.
 Chapters 1–3 (the solitaire round: optimal score, strategy/separability, tail
-probabilities) and Chapter 4 layers A–D (across-rounds win probability + best
-response to a greedy field) are complete and verified. Remaining: the symmetric
-**Nash equilibrium** via fictitious play (Ch. 4 cont.) and **adversarial
-action-card targeting** in the N-player game (Ch. 5) — specified in `PLAN.md`.
+probabilities) and Chapter 4 (across-rounds win probability, best response, and
+the symmetric Nash equilibrium via fictitious play) are complete and verified.
+Remaining: **adversarial action-card targeting** in the N-player game (Ch. 5) —
+specified in `PLAN.md`.

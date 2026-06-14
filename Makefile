@@ -30,6 +30,7 @@ CH1B := $(BIN)/ch1b_modifiers_sc
 CH2  := $(BIN)/ch2_separability
 CH3  := $(BIN)/ch3_tails
 CH4  := $(BIN)/ch4_competitive
+NASH := $(BIN)/ch4_nash
 ALL  := $(BIN)/solitaire_all_cards
 PROF := $(BIN)/profile
 TST1 := $(BIN)/test_ch1
@@ -39,7 +40,7 @@ TST3 := $(BIN)/test_ch3
 TST4 := $(BIN)/test_ch4
 TSTA := $(BIN)/test_all_cards
 
-all: $(CH1) $(CH1B) $(CH2) $(CH3) $(CH4) $(ALL) $(PROF) $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TSTA)
+all: $(CH1) $(CH1B) $(CH2) $(CH3) $(CH4) $(NASH) $(ALL) $(PROF) $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TSTA)
 	@echo "built with: $(CXX) $(MCPU)"
 
 $(BIN):
@@ -58,6 +59,9 @@ $(CH3): ch3_tails/main.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 $(CH4): ch4_competitive/main.cpp $(HDRS) | $(BIN)
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+$(NASH): ch4_nash/main.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 $(ALL): solitaire_all_cards/main.cpp $(HDRS) | $(BIN)
@@ -113,6 +117,10 @@ test: $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4)
 competitive: $(CH4)
 	./$(CH4)
 
+# Symmetric Nash equilibrium via fictitious self-play (~3-4 min).
+nash: $(NASH)
+	./$(NASH)
+
 # PMU profiling of the hot kernels (needs root to program counters).
 profile: $(PROF)
 	@echo "run 'sudo ./$(PROF)' for PMU counters; without root only wall-time prints."
@@ -127,4 +135,4 @@ test-all-cards: $(TSTA)
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all run test competitive profile all-cards test-all-cards clean
+.PHONY: all run test competitive nash profile all-cards test-all-cards clean

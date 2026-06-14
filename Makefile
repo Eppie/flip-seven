@@ -40,9 +40,10 @@ TST2 := $(BIN)/test_ch2
 TST3 := $(BIN)/test_ch3
 TST4 := $(BIN)/test_ch4
 TST5 := $(BIN)/test_ch5
+TSTN := $(BIN)/test_neon
 TSTA := $(BIN)/test_all_cards
 
-all: $(CH1) $(CH1B) $(CH2) $(CH3) $(CH4) $(NASH) $(CH5) $(ALL) $(PROF) $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5) $(TSTA)
+all: $(CH1) $(CH1B) $(CH2) $(CH3) $(CH4) $(NASH) $(CH5) $(ALL) $(PROF) $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5) $(TSTN) $(TSTA)
 	@echo "built with: $(CXX) $(MCPU)"
 
 $(BIN):
@@ -94,6 +95,9 @@ $(TST4): tests/test_ch4.cpp $(HDRS) | $(BIN)
 $(TST5): tests/test_ch5.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
+$(TSTN): tests/test_neon.cpp $(HDRS) | $(BIN)
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
 $(TSTA): tests/test_all_cards.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
@@ -108,7 +112,7 @@ run: $(CH1) $(CH1B) $(CH2) $(CH3)
 	@echo
 	./$(CH3)
 
-test: $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5)
+test: $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5) $(TSTN)
 	./$(TST1)
 	@echo
 	./$(TST1B)
@@ -120,6 +124,8 @@ test: $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5)
 	./$(TST4)
 	@echo
 	./$(TST5)
+	@echo
+	./$(TSTN)
 
 # Opt-in heavy solves (out of the fast loop).
 #   competitive: Ch.4 best-response grid (~9 s)

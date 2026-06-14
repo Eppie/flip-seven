@@ -268,8 +268,22 @@ directly by the packed state where the state allows it (numbers, numbers+
 modifiers), a hand-rolled flat open-addressing hash map only where it does not
 (the sparse Second Chance state — never `std::unordered_map`), xoshiro256++
 rather than `mt19937`, and partial Fisher–Yates. Every program prints timing and
-throughput. NEON/SIMD kernels and multithreading are planned (see `PLAN.md`) but
-not yet needed at this scale.
+throughput.
+
+**NEON-vectorized Monte-Carlo** (`include/flip7_sim_neon.hpp`): the numbers-only
+rollout doesn't actually need a physical deck — given the held mask `S` (popcount
+`p`), the next card is value `v` with probability `(count(v) − [v∈S]) / (79 − p)`,
+the *same* draw-without-replacement conditional the exact DP uses. Dropping the
+deck makes the whole rollout state a 13-bit mask, so we run **8 independent
+rollouts in lockstep** (`uint16x8`, one per lane) with per-lane alive predicates
+and persistent lane refill, a vectorized xoshiro128++×8, an unbiased 32-bit Lemire
+bound, and a branchless 13-step categorical decode. It is a *different sampler*
+(not a bit-for-bit replay of the scalar deck), but provably the *same distribution*
+— verified by matching the exact score pmf bin-by-bin to **max deviation 6×10⁻⁵**
+across all 79 bins, plus the exact DP's mean/bust/Flip-7. Net **~1.5× over the
+already-fast scalar simulator** (the floor is the O(13) decode replacing the
+scalar's O(1) deck pop; the win comes from 8-wide amortization). Multithreading
+across games is the remaining lever (see `PLAN.md`).
 
 ### PMU profiling (`make profile`)
 
@@ -285,6 +299,7 @@ IPC and per-op cost plus stall sources. On the M4 Pro:
 | dense DPs (numbers, +mods) | 44–215 ns/state | 3.0–4.0 | ~0 | ~0 | **compute** (healthy) |
 | hashed DP (+Second Chance) | 157 ns/state | 1.95 | **31.4** | **10.9** | **TLB** (random hash probes) |
 | MC numbers / +mods | 13–16 ns/roll | 3.6–3.8 | ~0 | ~0 | **compute** (healthy) |
+| MC numbers (NEON ×8) | ~8.5 ns/roll | — | ~0 | ~0 | **~1.5×** vs scalar (8 lockstep lanes) |
 | MC +Second Chance | 57 ns/roll | 1.87 | 21.1 | 4.4 | hash policy lookup per decision |
 | xoshiro256++ next / bounded | 0.7–0.8 ns | 4.9–6.3 | 0 | 0 | not a bottleneck |
 | `round_solve` (Ch.4 inner) | 47 µs/solve | 3.63 | 0.3 | 0.1 | **compute** (full 8K-state re-solve) |

@@ -14,6 +14,7 @@
 #include "flip7_duel.hpp"
 #include "flip7_rng.hpp"
 #include "flip7_sim.hpp"
+#include "flip7_sim_neon.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -87,6 +88,7 @@ int main() {
 
     std::printf("\n[Monte-Carlo %lluM rollouts] cache profile (per rollout)\n", (unsigned long long)(N / 1'000'000));
     profile("MC numbers",       CACHE_PROFILE, Nd, "roll", [&]{ volatile auto r = monte_carlo_solitaire(num_dp, N, 1).mean; (void)r; });
+    profile("MC numbers (NEON8)",CACHE_PROFILE, Nd, "roll", [&]{ volatile auto r = monte_carlo_solitaire_neon(num_dp, N, 1).mean; (void)r; });
     profile("MC +modifiers",    CACHE_PROFILE, Nd, "roll", [&]{ volatile auto r = monte_carlo_mod(mod_dp, N, 1).mean; (void)r; });
     profile("MC +2ndChance",    CACHE_PROFILE, Nd, "roll", [&]{ volatile auto r = monte_carlo_full(full_dp, N, 1).mean; (void)r; });
 

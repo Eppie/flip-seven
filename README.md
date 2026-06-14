@@ -68,12 +68,20 @@ early; further Flip Threes stack; a Freeze drawn during it is pending and Stays
 after). These **lower** the optimal expected score (22.2504 → **20.2980**, −1.95):
 Freeze caps your upside (you freeze ~12% of turns) and Flip Three forces risky
 draws (~11%). The exact DP adds a forced-draw counter and a pending-freeze flag,
-which multiply the state space to **1,208,732,216 states** — solved in ~5.3 min
-using a 34 GB open-addressing table. This count is not a surprise: it factors as
-**21,980,032 base configs × 55 action-card "modes"** (an upper bound of
-1,208,901,760), and the measured value is lower by just 0.014% — i.e. on average
-54.99 of the 55 modes are reachable per config. Because of its size this DP is
-opt-in (`make all-cards` / `make test-all-cards`), separate from the fast suite.
+which multiply the state space to **1,208,732,216 states**. This count is not a
+surprise: it factors as **21,980,032 base configs × 55 action-card "modes"** (an
+upper bound of 1,208,901,760), and the measured value is lower by just 0.014% —
+i.e. on average 54.99 of the 55 modes are reachable per config.
+
+That factorization is also the storage layout: rather than a flat 1.2-billion-slot
+hash (32 GB, TLB-bound — ~13.7 page-walks/state), we **hash only the base config
+`(nm, mm, sch, scn, extra)` and store its 55 modes `(f3, fz, forced)` contiguously**,
+indexed directly with no per-value key. That removes the 8-byte key from every value
+slot, keeps the action-card transitions (Flip Three / Freeze / forced) inside one
+~440-byte block, and shrinks the page tables enough to stay cached — cutting the
+solve from **~5.3 min / 34 GB to ~69 s / ~11 GB (≈4.6× faster, exact result
+unchanged**, MC-confirmed). Because of its size this DP is still opt-in
+(`make all-cards` / `make test-all-cards`), separate from the fast suite.
 
 ### Chapter 2 — what the optimal strategy actually is
 
@@ -313,9 +321,12 @@ IPC and per-op cost plus stall sources. On the M4 Pro:
 `make profile`; the IPC/TLB/branch columns populate under `sudo`.) Findings: the
 **hashed DPs are TLB-bound** (the ~1 GB / 34 GB tables thrash the TLB — the
 `[TLB detail]` line shows one hardware page-table walk per L2 TLB miss, ~one walk
-per state, so most of the 647 cyc/state is address translation; 2 MB superpages or
-a denser table are the lever, still TODO); the dense DPs, Monte-Carlo, PRNG, and
-the Ch.5 duel are already near peak IPC.
+per state, so most of the 647 cyc/state is address translation). 2 MB superpages
+are impossible on Apple Silicon (16 KB base pages, no userspace large pages), but
+the **denser-table lever paid off for the all-94 solve**: the base-config/mode
+block layout (above) shrank it 34 GB → ~11 GB and made the page tables cacheable,
+for ≈4.6× (the +Second-Chance DP could get the same treatment). The dense DPs,
+Monte-Carlo, PRNG, and the Ch.5 duel are already near peak IPC.
 
 The Ch.4 best response *was* compute-bound on re-solving the within-round DP, but
 that is now fixed: only `g[0]` changes between fixed-point iterations and the

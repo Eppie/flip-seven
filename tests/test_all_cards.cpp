@@ -21,7 +21,7 @@ static constexpr double kOptAll = 20.2980220287;
 
 int main() {
     printf("All-94-cards solitaire tests\n");
-    SolitaireAllDP dp;
+    SolitaireAllDPBlocked dp;
     const double opt = dp.optimal();
     printf("  (exact optimum = %.10f, states = %ld, load = %.3f)\n",
            opt, dp.states_evaluated, dp.load_factor());

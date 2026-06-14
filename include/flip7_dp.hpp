@@ -481,4 +481,201 @@ struct SolitaireAllDP {
     double load_factor() const { return (double)states_evaluated / (double)cap; }
 };
 
+// =============================================================================
+// Same exact all-94 solve, re-laid-out (optimization idea #2). The 55-bit state
+// splits into a BASE CONFIG (nm, mm, sch, extra) and an ACTION MODE
+// (scn, f3, fz, forced). We hash only the base config -> a contiguous block of
+// values, one per action mode (indexed directly, no per-value key). The set of
+// reachable modes is base-independent (the action bookkeeping evolves the same way
+// regardless of the hand), so a single BFS precomputes a dense mode index (~55).
+//
+// Why this is faster than the flat 1.2B-slot hash (which is TLB-bound, ~13.7
+// page-walks/state): the 8-byte key vanishes from every value slot (32 GB ->
+// ~11 GB), so each child value read moves 8 bytes (no key compare) instead of 16;
+// the action-card transitions (Flip Three / Freeze / forced) stay inside one
+// ~440-byte block; and the two structures actually touched -- an ~0.8 GB base hash
+// and a ~10 GB value array -- have small enough page tables to stay cached, so the
+// page walks are cheap. EXACT: bit-for-bit the same values as SolitaireAllDP.
+// =============================================================================
+struct SolitaireAllDPBlocked {
+    static constexpr int kDeckTotal = 94;
+    static constexpr uint64_t kEmpty   = ~0ull;
+    static constexpr double   kEstTotal = 1.2089e9;
+
+    // --- dense action-mode remap (base-independent reachable set) ---
+    // Mode = (f3, fz, forced); scn lives in the base config (an SC draw changes sch
+    // -> a base jump anyway, so this keeps every mode-local transition local). ~55.
+    uint16_t mode_dense[128];
+    int n_modes = 0;
+    static int mode_pack(int f3, int fz, int forced) {
+        return f3 | (fz << 2) | (forced << 4);  // f3:2 fz:2 forced:3
+    }
+    void build_modes() {
+        bool seen[128] = {false};
+        int queue[128], qn = 0;
+        auto push = [&](int f3, int fz, int forced) {
+            const int p = mode_pack(f3, fz, forced);
+            if (!seen[p]) { seen[p] = true; queue[qn++] = p; }
+        };
+        push(0, 0, 0);
+        for (int qi = 0; qi < qn; ++qi) {
+            const int p = queue[qi];
+            const int f3 = p & 3, fz = (p >> 2) & 3, forced = (p >> 4) & 7;
+            if (forced == 0) {
+                if (fz >= 1) continue;                  // pending Freeze -> Stay (terminal)
+                if (f3 < 3)  push(f3 + 1, fz, 3);       // draw Flip Three (free)
+            } else {
+                const int nf = forced - 1;              // any forced draw (incl. SC) consumes one
+                push(f3, fz, nf);                       // number / modifier / Second Chance
+                if (f3 < 3)  push(f3 + 1, fz, nf + 3);  // Flip Three (stacks)
+                if (fz < 3)  push(f3, fz + 1, nf);      // Freeze (pending)
+            }
+        }
+        for (int i = 0; i < 128; ++i) mode_dense[i] = 0xFFFF;
+        n_modes = 0;
+        for (int p = 0; p < 128; ++p) if (seen[p]) mode_dense[p] = (uint16_t)(n_modes++);
+    }
+
+    // --- base-config hash + value arena + policy bits ---
+    size_t base_cap, base_mask;
+    std::vector<uint64_t> base_key;
+    std::vector<uint32_t> base_blk;
+    uint32_t next_block = 0, max_blocks;
+    std::vector<double>   values;     // -1.0 sentinel = uncomputed (real EV >= 0)
+    std::vector<uint64_t> pol_bits;
+    long states_evaluated = 0;
+    bool verbose = true;
+    std::chrono::steady_clock::time_point t_start;
+
+    explicit SolitaireAllDPBlocked(size_t base_pow2 = (size_t(1) << 26),
+                                   uint32_t maxblk = 23'000'000u)
+        : base_cap(base_pow2), base_mask(base_pow2 - 1),
+          base_key(base_pow2, kEmpty), base_blk(base_pow2, 0), max_blocks(maxblk) {
+        build_modes();
+        values.assign((size_t)max_blocks * n_modes, -1.0);
+        pol_bits.assign(((size_t)max_blocks * n_modes + 63) / 64, 0);
+    }
+
+    static uint64_t mix(uint64_t x) {
+        x ^= x >> 33; x *= 0xff51afd7ed558ccdULL;
+        x ^= x >> 33; x *= 0xc4ceb9fe1a85ec53ULL;
+        x ^= x >> 33; return x;
+    }
+    static uint64_t base_pack(uint16_t nm, uint16_t mm, int sch, int scn, uint32_t extra) {
+        return (uint64_t)nm | ((uint64_t)mm << 13) | ((uint64_t)sch << 19)
+             | ((uint64_t)scn << 20) | ((uint64_t)extra << 22);
+    }
+    static int      extraOf(uint32_t e, int v)         { return (e >> (2 * v)) & 3u; }
+    static uint32_t setExtra(uint32_t e, int v, int c) {
+        return (e & ~(3u << (2 * v))) | ((uint32_t)c << (2 * v));
+    }
+
+    uint32_t base_find_or_insert(uint64_t bkey) {
+        size_t i = mix(bkey) & base_mask;
+        while (base_key[i] != kEmpty && base_key[i] != bkey) i = (i + 1) & base_mask;
+        if (base_key[i] == kEmpty) {
+            if (next_block >= max_blocks) {
+                fprintf(stderr, "FATAL: SolitaireAllDPBlocked arena full (%u blocks)\n", next_block);
+                std::fflush(stderr); std::abort();
+            }
+            base_key[i] = bkey;
+            base_blk[i] = next_block++;
+        }
+        return base_blk[i];
+    }
+
+    double solve(uint16_t nm, uint16_t mm, int sch, int scn, uint32_t extra, int f3, int fz, int forced) {
+        const uint32_t blk = base_find_or_insert(base_pack(nm, mm, sch, scn, extra));
+        const size_t slot = (size_t)blk * n_modes + mode_dense[mode_pack(f3, fz, forced)];
+        if (values[slot] >= 0.0) return values[slot];
+
+        const int pcn = maskPop(nm);
+        double val;
+        uint8_t pol = 0;
+        if (pcn == kFlip7Target) {
+            val = (double)fullScore(nm, mm);
+        } else if (forced == 0 && fz >= 1) {
+            val = (double)fullScore(nm, mm);                 // pending Freeze resolves -> Stay
+        } else {
+            const bool free = (forced == 0);
+            int E = 0;
+            for (int v = 2; v <= 12; ++v) E += extraOf(extra, v);
+            const int T = kDeckTotal - (pcn + E + maskPop(mm) + scn + f3 + fz);
+            const int nf_non = free ? 0 : (forced - 1);
+            const int nf_f3  = free ? 3 : (forced - 1 + 3);
+            double ev = 0.0;
+            for (int v = 0; v < kNumValues; ++v) {
+                const uint16_t bit = (uint16_t)(1u << v);
+                const int r = numberCount(v) - (int)((nm >> v) & 1) - extraOf(extra, v);
+                if (nm & bit) {
+                    if (r > 0 && sch) {
+                        const double p = (double)r / (double)T;
+                        ev += p * solve(nm, mm, 0, scn, setExtra(extra, v, extraOf(extra, v) + 1), f3, fz, nf_non);
+                    }
+                } else {
+                    const double p = (double)r / (double)T;
+                    const uint16_t nn = (uint16_t)(nm | bit);
+                    if (maskPop(nn) == kFlip7Target) ev += p * (double)fullScore(nn, mm);
+                    else                             ev += p * solve(nn, mm, sch, scn, extra, f3, fz, nf_non);
+                }
+            }
+            for (int i = 0; i < kNumModifiers; ++i) {
+                const uint16_t bit = (uint16_t)(1u << i);
+                if (mm & bit) continue;
+                ev += (1.0 / (double)T) * solve(nm, (uint16_t)(mm | bit), sch, scn, extra, f3, fz, nf_non);
+            }
+            if (scn < kNumSecondChance)
+                ev += ((double)(kNumSecondChance - scn) / (double)T)
+                      * solve(nm, mm, 1, scn + 1, extra, f3, fz, nf_non);
+            if (f3 < 3)
+                ev += ((double)(3 - f3) / (double)T)
+                      * solve(nm, mm, sch, scn, extra, f3 + 1, fz, nf_f3);
+            if (fz < 3) {
+                const double p = (double)(3 - fz) / (double)T;
+                if (free) ev += p * (double)fullScore(nm, mm);
+                else      ev += p * solve(nm, mm, sch, scn, extra, f3, fz + 1, nf_non);
+            }
+            if (free) {
+                const double ev_stay = (double)fullScore(nm, mm);
+                if (ev > ev_stay) { val = ev;      pol = 1; }
+                else              { val = ev_stay; pol = 0; }
+            } else {
+                val = ev;
+            }
+        }
+        values[slot] = val;
+        if (pol) pol_bits[slot >> 6] |= (uint64_t)1 << (slot & 63);
+        ++states_evaluated;
+        if (verbose && (states_evaluated & 0xFFFFFF) == 0) {
+            const double el = std::chrono::duration<double>(
+                                  std::chrono::steady_clock::now() - t_start).count();
+            const double rate = states_evaluated / (el > 0 ? el : 1);
+            const double pct  = 100.0 * states_evaluated / kEstTotal;
+            const double eta  = rate > 0 ? (kEstTotal - states_evaluated) / rate : 0;
+            fprintf(stderr,
+                    "  [AllDPBlocked] %ld M / ~%.0fM (%.0f%%)  %.1f M/s  elapsed %.0fs  "
+                    "ETA ~%.0fs  blocks %.1fM\n",
+                    states_evaluated / 1000000, kEstTotal / 1e6, pct, rate / 1e6,
+                    el, eta < 0 ? 0 : eta, next_block / 1e6);
+            std::fflush(stderr);
+        }
+        return val;
+    }
+
+    double optimal() {
+        t_start = std::chrono::steady_clock::now();
+        return solve(0, 0, 0, 0, 0, 0, 0, 0);
+    }
+
+    uint8_t policy(uint16_t nm, uint16_t mm, int sch, int scn, uint32_t extra, int f3) const {
+        const uint64_t bkey = base_pack(nm, mm, sch, scn, extra);
+        size_t i = mix(bkey) & base_mask;
+        while (base_key[i] != kEmpty && base_key[i] != bkey) i = (i + 1) & base_mask;
+        if (base_key[i] == kEmpty) return 0;
+        const size_t slot = (size_t)base_blk[i] * n_modes + mode_dense[mode_pack(f3, 0, 0)];
+        return (uint8_t)((pol_bits[slot >> 6] >> (slot & 63)) & 1);
+    }
+    double load_factor() const { return (double)next_block / (double)base_cap; }
+};
+
 }  // namespace flip7

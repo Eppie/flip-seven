@@ -228,13 +228,14 @@ inline MCFullResult monte_carlo_full(const SolitaireFullDP& dp, uint64_t n, uint
 // --- All 94 cards, solitaire (self-targeted Freeze / Flip Three) -------------
 // Card codes: 0..12 numbers, 13..18 modifiers, 19 = Second Chance,
 // 20 = Flip Three, 21 = Freeze. Mirrors SolitaireAllDP exactly.
-inline MCFullResult monte_carlo_all(const SolitaireAllDP& dp, uint64_t n, uint64_t seed,
+template <class DP>
+inline MCFullResult monte_carlo_all(const DP& dp, uint64_t n, uint64_t seed,
                                     double* hist /*[256], optional*/ = nullptr) {
     Xoshiro256pp rng;
     rng.seed(seed);
-    const int total = SolitaireAllDP::kDeckTotal;  // 94
+    const int total = DP::kDeckTotal;  // 94
 
-    uint8_t deck[SolitaireAllDP::kDeckTotal];
+    uint8_t deck[DP::kDeckTotal];
     int idx = 0;
     for (int v = 0; v < kNumValues; ++v)
         for (int k = 0, c = numberCount(v); k < c; ++k) deck[idx++] = (uint8_t)v;
@@ -269,7 +270,7 @@ inline MCFullResult monte_carlo_all(const SolitaireAllDP& dp, uint64_t n, uint64
                 const int v = card;
                 const uint16_t bit = (uint16_t)(1u << v);
                 if (nm & bit) {
-                    if (sch) { sch = 0; extra = SolitaireAllDP::setExtra(extra, v, SolitaireAllDP::extraOf(extra, v) + 1); didsave = true; }
+                    if (sch) { sch = 0; extra = DP::setExtra(extra, v, DP::extraOf(extra, v) + 1); didsave = true; }
                     else     { score = 0.0; ++busts; break; }
                 } else {
                     nm |= bit;

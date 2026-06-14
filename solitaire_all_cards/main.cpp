@@ -38,15 +38,16 @@ int main(int argc, char** argv) {
     SolitaireFullDP dp_full; const double opt_full = dp_full.optimal();
     printf("(solved numbers / +modifiers / +Second Chance in %.2f s)\n\n", secs(tf, clk::now()));
 
-    // The full 94-card exact DP.
+    // The full 94-card exact DP (idea #2: base config -> contiguous action-mode block).
     printf("--- all 94 cards (exact DP) ---\n");
     auto t0 = clk::now();
-    SolitaireAllDP dp_all;
+    SolitaireAllDPBlocked dp_all;
+    printf("[DP] layout: base config (nm,mm,sch,extra) x %d action modes per block\n", dp_all.n_modes);
     const double opt_all = dp_all.optimal();
     auto t1 = clk::now();
     printf("[DP] exact optimal E[score]        = %.10f\n", opt_all);
-    printf("[DP] states / solve time           = %ld / %.2f s   (hash load factor %.3f)\n",
-           dp_all.states_evaluated, secs(t0, t1), dp_all.load_factor());
+    printf("[DP] states / solve time           = %ld / %.2f s   (%.2fM base blocks, load %.3f)\n",
+           dp_all.states_evaluated, secs(t0, t1), dp_all.next_block / 1e6, dp_all.load_factor());
 
     auto m0 = clk::now();
     static double hist[256] = {0};

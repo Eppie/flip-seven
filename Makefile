@@ -31,6 +31,7 @@ CH2  := $(BIN)/ch2_separability
 CH3  := $(BIN)/ch3_tails
 CH4  := $(BIN)/ch4_competitive
 NASH := $(BIN)/ch4_nash
+CH5  := $(BIN)/ch5_actions
 ALL  := $(BIN)/solitaire_all_cards
 PROF := $(BIN)/profile
 TST1 := $(BIN)/test_ch1
@@ -38,9 +39,10 @@ TST1B:= $(BIN)/test_ch1b
 TST2 := $(BIN)/test_ch2
 TST3 := $(BIN)/test_ch3
 TST4 := $(BIN)/test_ch4
+TST5 := $(BIN)/test_ch5
 TSTA := $(BIN)/test_all_cards
 
-all: $(CH1) $(CH1B) $(CH2) $(CH3) $(CH4) $(NASH) $(ALL) $(PROF) $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TSTA)
+all: $(CH1) $(CH1B) $(CH2) $(CH3) $(CH4) $(NASH) $(CH5) $(ALL) $(PROF) $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5) $(TSTA)
 	@echo "built with: $(CXX) $(MCPU)"
 
 $(BIN):
@@ -62,6 +64,9 @@ $(CH4): ch4_competitive/main.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 $(NASH): ch4_nash/main.cpp $(HDRS) | $(BIN)
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+$(CH5): ch5_actions/main.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 $(ALL): solitaire_all_cards/main.cpp $(HDRS) | $(BIN)
@@ -86,6 +91,9 @@ $(TST3): tests/test_ch3.cpp $(HDRS) | $(BIN)
 $(TST4): tests/test_ch4.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
+$(TST5): tests/test_ch5.cpp $(HDRS) | $(BIN)
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
 $(TSTA): tests/test_all_cards.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
@@ -100,7 +108,7 @@ run: $(CH1) $(CH1B) $(CH2) $(CH3)
 	@echo
 	./$(CH3)
 
-test: $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4)
+test: $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5)
 	./$(TST1)
 	@echo
 	./$(TST1B)
@@ -110,6 +118,8 @@ test: $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4)
 	./$(TST3)
 	@echo
 	./$(TST4)
+	@echo
+	./$(TST5)
 
 # Opt-in heavy solves (out of the fast loop).
 #   competitive: Ch.4 best-response grid (~9 s)
@@ -120,6 +130,10 @@ competitive: $(CH4)
 # Symmetric Nash equilibrium via fictitious self-play (~3-4 min).
 nash: $(NASH)
 	./$(NASH)
+
+# Chapter 5: adversarial action-card targeting (Freeze / Flip Three), ~seconds.
+actions: $(CH5)
+	./$(CH5)
 
 # PMU profiling of the hot kernels (needs root to program counters).
 profile: $(PROF)
@@ -135,4 +149,4 @@ test-all-cards: $(TSTA)
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all run test competitive nash profile all-cards test-all-cards clean
+.PHONY: all run test competitive nash actions profile all-cards test-all-cards clean

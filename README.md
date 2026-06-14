@@ -173,6 +173,57 @@ rounds; action-card targeting is deferred to Ch. 5.)
   pure-best-response value is not a 0.5 signal, since pure play can't mirror a mixed
   strategy.)
 
+### Chapter 5 — adversarial action-card targeting (Freeze / Flip Three)
+
+When you flip a **Freeze** or **Flip Three** you must hand it to an active player —
+yourself or an opponent — so the targeting is adversarial. We solve the *value* of
+each card exactly (numbers-only DP, MC-confirmed), then measure targeting in the
+real 94-card 2-player game (`make actions`).
+
+- **Flip Three is never a gift.** Forcing the target to draw 3 cards changes their
+  expected round score by `dMean ≤ 0` everywhere — it is only a *weapon*. But its
+  bite depends on how deep the target already is:
+
+  | target holds (k uniques) | 0 | 1 | 2 | **4** | 5 | 6 |
+  |---|---:|---:|---:|---:|---:|---:|
+  | Δ to target's E[round] | −0.1 | −1.7 | −6.0 | **−14.4** | −7.4 | −0.5 |
+  | resulting P(bust) | 0.34 | 0.48 | 0.63 | **0.79** | 0.62 | 0.37 |
+  | resulting P(Flip 7) | 0.00 | 0.00 | 0.00 | 0.21 | 0.38 | **0.63** |
+
+  It is **~neutral when the target is shallow** (the forced draws are ones an optimal
+  player would take anyway), **most damaging at k≈4** (−14 points), then **weaker
+  again near Flip 7** — forcing draws on a 5–6 card hand often *completes their +15
+  bonus*. So aim it at a mid-deep opponent, never at someone one card from Flip 7.
+  Flipping an optimal opponent right as they would bank (`Flip Three @ stop`) cuts
+  their round mean **18.57 → 7.89** and busts them **85%** of the time (DP=MC exactly).
+
+- **Freeze caps the target** at their current `sum(S)`; the points it denies are
+  `EV(S) − sum(S) ≥ 0`. The competitive catch: it also removes the target's *bust
+  risk*, so against an opponent who might bust on their own it is a double-edge.
+
+- **Whom to Flip Three (exact win-prob DP).** In first-to-200 the answer is
+  **unconditional: always the opponent** — attacking only lowers their mean (to ~7.9),
+  so self/none are dominated at every score. The standings change only *how much* the
+  swing is worth, not the direction. (Granting a free, optimally-aimed Flip Three
+  every round is worth **W(0,0)=0.942** — an idealized ceiling that isolates the
+  direction; the real card frequency is measured below.)
+
+- **The real 94-card 2-player game** (organic action draws, exact rules — set-aside
+  nested actions, Flip 7 ends the round; players use the numbers+modifier optimal
+  Hit/Stay, only targeting differs; 300 k games/matchup):
+
+  | matchup | agent win rate |
+  |---|---:|
+  | adversarial vs. random targeting | **0.571** (+7.1%) |
+  | adversarial vs. naive (use-on-self) | **0.642** (+14.2%) |
+  | random vs. random | 0.501 (sanity) |
+  | adversarial vs. adversarial | 0.502 (sanity) |
+
+  Adversarial targeting is worth **+7 points of win probability** over random and
+  **+14** over the naive self-target baseline. The symmetric matchups return ~0.5 as
+  they must. Numbers-only exact layer (Parts A–B) is in the fast test suite; Part C
+  is the faithful-rules Monte-Carlo ground truth.
+
 ## Build & run
 
 Requires a C++20 compiler (tested with Apple Clang on an Apple M4 Pro; the
@@ -184,6 +235,7 @@ make run        # fast headline numbers (Ch.1 progression, Ch.2 strategy, Ch.3 t
 make test       # assert them (DP<->MC agreement + regression), incl. Ch.4 A-C
 make competitive  # Ch.4 best-response grid + push/safe + MC (~9 s) -- opt-in
 make nash         # Ch.4 symmetric Nash via fictitious self-play (~3 min) -- opt-in
+make actions      # Ch.5 action-card targeting: exact A/B + real 94-card duel (~6 s)
 make all-cards    # the full 94-card solitaire DP (~5 min, ~34 GB) -- opt-in
 make test-all-cards
 make profile      # PMU profiling (sudo ./bin/profile for counters)
@@ -260,8 +312,10 @@ exact results, not to produce them.
 
 The complete single solitaire turn is solved exactly for **all 94 cards**
 (numbers, modifiers, Second Chance, Freeze, Flip Three) and Monte-Carlo confirmed.
-Chapters 1–3 (the solitaire round: optimal score, strategy/separability, tail
-probabilities) and Chapter 4 (across-rounds win probability, best response, and
-the symmetric Nash equilibrium via fictitious play) are complete and verified.
-Remaining: **adversarial action-card targeting** in the N-player game (Ch. 5) —
-specified in `PLAN.md`.
+**All five chapters are complete and verified:** the solitaire round (optimal
+score, strategy/separability, tail probabilities), the across-rounds competition
+(win probability, best response, symmetric Nash via fictitious play), and
+adversarial action-card targeting (exact Freeze/Flip-Three values, optimal
+targeting, and the real 94-card 2-player game). Every headline number is produced
+by an exact DP and independently confirmed by Monte-Carlo, per the project's
+discipline.

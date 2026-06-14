@@ -29,14 +29,16 @@ CH1  := $(BIN)/ch1_solitaire_turn
 CH1B := $(BIN)/ch1b_modifiers_sc
 CH2  := $(BIN)/ch2_separability
 CH3  := $(BIN)/ch3_tails
+CH4  := $(BIN)/ch4_competitive
 ALL  := $(BIN)/solitaire_all_cards
 TST1 := $(BIN)/test_ch1
 TST1B:= $(BIN)/test_ch1b
 TST2 := $(BIN)/test_ch2
 TST3 := $(BIN)/test_ch3
+TST4 := $(BIN)/test_ch4
 TSTA := $(BIN)/test_all_cards
 
-all: $(CH1) $(CH1B) $(CH2) $(CH3) $(ALL) $(TST1) $(TST1B) $(TST2) $(TST3) $(TSTA)
+all: $(CH1) $(CH1B) $(CH2) $(CH3) $(CH4) $(ALL) $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TSTA)
 	@echo "built with: $(CXX) $(MCPU)"
 
 $(BIN):
@@ -54,6 +56,9 @@ $(CH2): ch2_separability/main.cpp $(HDRS) | $(BIN)
 $(CH3): ch3_tails/main.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
+$(CH4): ch4_competitive/main.cpp $(HDRS) | $(BIN)
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
 $(ALL): solitaire_all_cards/main.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
@@ -69,10 +74,14 @@ $(TST2): tests/test_ch2.cpp $(HDRS) | $(BIN)
 $(TST3): tests/test_ch3.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
+$(TST4): tests/test_ch4.cpp $(HDRS) | $(BIN)
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
 $(TSTA): tests/test_all_cards.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-# Fast headline numbers + tests (numbers, +modifiers, +Second Chance, strategy, tails).
+# Fast headline numbers + tests (Ch.1 progression, Ch.2 strategy, Ch.3 tails,
+# Ch.4 A-C win probabilities).
 run: $(CH1) $(CH1B) $(CH2) $(CH3)
 	./$(CH1)
 	@echo
@@ -82,7 +91,7 @@ run: $(CH1) $(CH1B) $(CH2) $(CH3)
 	@echo
 	./$(CH3)
 
-test: $(TST1) $(TST1B) $(TST2) $(TST3)
+test: $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4)
 	./$(TST1)
 	@echo
 	./$(TST1B)
@@ -90,9 +99,15 @@ test: $(TST1) $(TST1B) $(TST2) $(TST3)
 	./$(TST2)
 	@echo
 	./$(TST3)
+	@echo
+	./$(TST4)
 
-# The complete 94-card solitaire DP is ~1e9 states (~30 GB, minutes to solve),
-# so it is opt-in rather than part of the fast run/test loop.
+# Opt-in heavy solves (out of the fast loop).
+#   competitive: Ch.4 best-response grid (~24 s)
+#   all-cards:   full 94-card solitaire DP (~1e9 states, ~30 GB, minutes)
+competitive: $(CH4)
+	./$(CH4)
+
 all-cards: $(ALL)
 	./$(ALL)
 
@@ -102,4 +117,4 @@ test-all-cards: $(TSTA)
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all run test all-cards test-all-cards clean
+.PHONY: all run test competitive all-cards test-all-cards clean

@@ -128,6 +128,36 @@ draws toward 7) push it up, while a forced Freeze ends ~17% of attempts — and 
 action cards actually *lower* the bust rate (a Freeze ends in a Stay, not a bust).
 All figures are exact (numbers-only) or Monte-Carlo with the exact policies, cross-checked.
 
+### Chapter 4 — competitive first-to-200 (win probability)
+
+Across rounds, the goal is no longer the most points — it's to reach 200 first.
+Optimizing for *winning* differs from optimizing for *score*. (Model: independent
+rounds; action-card targeting is deferred to Ch. 5.)
+
+- **Solitaire-to-target:** at ~18.57 points/round, it takes on average **11.51
+  rounds** to reach 200 (MC-confirmed).
+- **Both players greedy (play for score):** by symmetry W(0,0) = **0.5** exactly.
+  A lead is worth more later — an ~18-point (one-round) edge is ≈63% early but
+  **≈82%** near the finish.
+- **Best response to a greedy field** (re-optimize each round for win probability
+  instead of score): **W(0,0) = 0.5593** — a win-probability player beats a
+  score-maximizing player **56%–44%**, an edge of **+5.9 points of win
+  probability** purely from *how* it manages risk:
+
+  | your total | opp total | round P(bust) | E[round] | stance |
+  |---:|---:|---:|---:|---|
+  | 110 | 160 | 0.567 | 15.9 | far behind → **push** (more risk, *lower* mean) |
+  | 110 | 135 | 0.438 | 17.9 | behind → push |
+  | 110 | 110 | 0.341 | 18.5 | even → ≈ greedy |
+  | 110 | 85 | 0.257 | 18.4 | ahead → play safe |
+  | 110 | 60 | 0.211 | 18.0 | far ahead → **safest** |
+
+  When far behind it deliberately accepts a **57%** bust risk (vs greedy's 31%) and
+  even a *lower* expected score, trading mean for the variance it needs to catch up;
+  when ahead it cuts risk to ~21%. The best-response grid is exact, cross-checked by
+  a Monte-Carlo tournament (0.5589 vs 0.5593). Still to come (Ch. 4 cont.): the
+  symmetric Nash equilibrium via fictitious play.
+
 ## Build & run
 
 Requires a C++20 compiler (tested with Apple Clang on an Apple M4 Pro; the
@@ -136,8 +166,9 @@ Makefile auto-detects the best `-mcpu`).
 ```sh
 make            # build all binaries + tests
 make run        # fast headline numbers (Ch.1 progression, Ch.2 strategy, Ch.3 tails)
-make test       # assert them (DP<->MC agreement + regression)
-make all-cards  # the full 94-card solitaire DP (~5 min, ~34 GB) -- opt-in
+make test       # assert them (DP<->MC agreement + regression), incl. Ch.4 A-C
+make competitive  # Ch.4 best-response grid + push/safe + MC (~24 s) -- opt-in
+make all-cards    # the full 94-card solitaire DP (~5 min, ~34 GB) -- opt-in
 make test-all-cards
 ```
 
@@ -183,8 +214,8 @@ exact results, not to produce them.
 
 The complete single solitaire turn is solved exactly for **all 94 cards**
 (numbers, modifiers, Second Chance, Freeze, Flip Three) and Monte-Carlo confirmed.
-Action cards are self-targeted here; their *adversarial* targeting is the
-multiplayer problem (Chapter 5). Chapters 2–5 — separability, tail probabilities,
-the first-to-200 win-probability DP and Nash equilibrium via fictitious play, and
-adversarial action-card targeting — are specified in `PLAN.md` and not yet
-implemented.
+Chapters 1–3 (the solitaire round: optimal score, strategy/separability, tail
+probabilities) and Chapter 4 layers A–D (across-rounds win probability + best
+response to a greedy field) are complete and verified. Remaining: the symmetric
+**Nash equilibrium** via fictitious play (Ch. 4 cont.) and **adversarial
+action-card targeting** in the N-player game (Ch. 5) — specified in `PLAN.md`.

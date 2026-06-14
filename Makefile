@@ -108,7 +108,7 @@ test: $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4)
 	./$(TST4)
 
 # Opt-in heavy solves (out of the fast loop).
-#   competitive: Ch.4 best-response grid (~24 s)
+#   competitive: Ch.4 best-response grid (~9 s)
 #   all-cards:   full 94-card solitaire DP (~1e9 states, ~30 GB, minutes)
 competitive: $(CH4)
 	./$(CH4)

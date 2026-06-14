@@ -61,6 +61,28 @@ int main() {
     profile("modifiers DP (262K)",  CACHE_PROFILE, 262144,      "st", [&]{ SolitaireModDP d;  d.optimal(); });
     profile("+2ndChance DP (22M)",  CACHE_PROFILE, full_states, "st", [&]{ SolitaireFullDP d; d.optimal(); });
 
+    // Direct attribution: each L2 TLB miss triggers a hardware page-table walk
+    // (a multi-level dependent memory chase, ~100+ cycles). MMU_TABLE_WALK_DATA
+    // counts them, so walks/state x walk-latency shows where the cycles go.
+    std::printf("\n[TLB detail] hashed +2ndChance DP — page-walk attribution\n");
+    {
+        const auto WALK = perf::Counter::Named("MMU_TABLE_WALK_DATA");
+        PerfMeasurement m = PerfMeasure(CYCLES | INSTRUCTIONS | DTLB_MISS | L2_TLB_MISS | WALK,
+                                        [&]{ SolitaireFullDP d; d.optimal(); });
+        if (!m.valid) { std::printf("  [no PMU counters — run with sudo]\n"); }
+        else {
+            const auto cyc = m.Get(CYCLES); const auto ins = m.Get(INSTRUCTIONS);
+            const auto w = m.Get(WALK); const auto l2 = m.Get(L2_TLB_MISS);
+            std::printf("  ");
+            if (cyc) std::printf("%.0f cyc/state   ", *cyc / full_states);
+            if (l2)  std::printf("L2TLB-miss/state=%.1f   ", *l2 / full_states);
+            if (w)   std::printf("page-walks/state=%.1f", *w / full_states);
+            if (w && ins && *ins) std::printf("  (walks/kI=%.1f)", *w * 1000.0 / *ins);
+            std::printf("\n  => walks ~ L2 TLB misses; each is a multi-level page chase, so most of\n");
+            std::printf("     the cyc/state is address translation, not arithmetic.\n");
+        }
+    }
+
     std::printf("\n[Monte-Carlo %lluM rollouts] cache profile (per rollout)\n", (unsigned long long)(N / 1'000'000));
     profile("MC numbers",       CACHE_PROFILE, Nd, "roll", [&]{ volatile auto r = monte_carlo_solitaire(num_dp, N, 1).mean; (void)r; });
     profile("MC +modifiers",    CACHE_PROFILE, Nd, "roll", [&]{ volatile auto r = monte_carlo_mod(mod_dp, N, 1).mean; (void)r; });

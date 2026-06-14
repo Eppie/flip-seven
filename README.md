@@ -170,7 +170,7 @@ Makefile auto-detects the best `-mcpu`).
 make            # build all binaries + tests
 make run        # fast headline numbers (Ch.1 progression, Ch.2 strategy, Ch.3 tails)
 make test       # assert them (DP<->MC agreement + regression), incl. Ch.4 A-C
-make competitive  # Ch.4 best-response grid + push/safe + MC (~24 s) -- opt-in
+make competitive  # Ch.4 best-response grid + push/safe + MC (~9 s) -- opt-in
 make all-cards    # the full 94-card solitaire DP (~5 min, ~34 GB) -- opt-in
 make test-all-cards
 ```
@@ -222,10 +222,17 @@ needs root) reports IPC and per-op cost plus stall sources. On the M4 Pro:
 | `round_solve` (Ch.4 inner) | 47 µs/solve | 3.63 | 0.3 | 0.1 | **compute** (full 8K-state re-solve) |
 
 Findings: the **hashed DPs are TLB-bound** (the ~1 GB / 34 GB tables thrash the
-TLB — 2 MB superpages or a denser table are the lever); the **Ch.4 best response
-is compute-bound on re-solving the within-round DP** (only `g[0]` changes between
-fixed-point iterations, so an incremental solve would cut the ~24 s); the dense
-DPs, Monte-Carlo, and PRNG are already near peak IPC.
+TLB — the `[TLB detail]` line shows one hardware page-table walk per L2 TLB miss,
+~one walk per state, so most of the 647 cyc/state is address translation; 2 MB
+superpages or a denser table are the lever, still TODO); the dense DPs,
+Monte-Carlo, and PRNG are already near peak IPC.
+
+The Ch.4 best response *was* compute-bound on re-solving the within-round DP, but
+that is now fixed: only `g[0]` changes between fixed-point iterations and the
+solver is linear in `g[0]` within a policy region, so the self-loop is solved in
+closed form (`w* = (U0 − B0·D0·w)/(1 − B0·D0)`, where `B0 = P(bust)`), cutting it
+from ~6–20 solves/state to ~3.4 and the grid from ~24 s to **~7 s** (identical
+W_br, MC-confirmed).
 
 ## Relation to prior work
 

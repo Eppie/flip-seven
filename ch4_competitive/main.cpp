@@ -15,6 +15,7 @@
 #include "flip7_rng.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -67,9 +68,11 @@ int main() {
 
     std::vector<double> Wbr((size_t)kT * kT, 0.0);
     std::vector<float>  pmfA((size_t)kT * kT * (kRoundScoreMax + 1), 0.0f);  // win-optimal A round pmf per state
-    std::vector<double> U(1 << kNumValues), g(kRoundScoreMax + 1);
+    std::vector<double> U(1 << kNumValues), Bc(1 << kNumValues), g(kRoundScoreMax + 1);
     std::vector<uint8_t> hit(1 << kNumValues);
     std::vector<double> rd(kRoundScoreMax + 1);
+    long solves = 0;  // round_solve calls (closed-form: ~1-2/state vs ~6-20 plain)
+    const auto t_br = std::chrono::steady_clock::now();
 
     for (int sumab = 2 * (kT - 1); sumab >= 0; --sumab) {
         const int alo = std::max(0, sumab - (kT - 1));
@@ -90,11 +93,18 @@ int main() {
             }
             const double base0 = g[0];                 // = sum_{y>0} D[y] outcome(a,b+y)  (self term was 0)
             double w = wg(a, b);                        // warm start
-            for (int it = 0; it < 25; ++it) {
-                g[0] = base0 + D[0] * w;                // self-loop: both bust -> stay at (a,b)
-                const double w2 = round_solve(g.data(), U.data(), nullptr);
-                if (std::fabs(w2 - w) < 1e-11) { w = w2; break; }
-                w = w2;
+            // Self-loop g[0] = base0 + D0*w, w = U[0]. round_solve is linear in
+            // g[0] within a policy region, so jump to the exact fixed point each
+            // step: w* = (U0 - B0*D0*w)/(1 - B0*D0). Converges in ~1-2 solves.
+            for (int it = 0; it < 12; ++it) {
+                g[0] = base0 + D[0] * w;
+                double B0;
+                const double U0 = round_solve(g.data(), U.data(), nullptr, Bc.data(), &B0);
+                ++solves;
+                const double denom = 1.0 - B0 * D[0];
+                const double w_new = (denom > 1e-12) ? (U0 - B0 * D[0] * w) / denom : U0;
+                if (std::fabs(w_new - w) < 1e-12) { w = w_new; break; }
+                w = w_new;
             }
             Wbr[(size_t)a * kT + b] = w;
             // store the win-optimal round pmf for the MC cross-check
@@ -105,8 +115,11 @@ int main() {
             for (int s = 0; s <= kRoundScoreMax; ++s) dst[s] = (float)rd[s];
         }
     }
-    printf("   W_br(0,0) = %.6f  => adapting is worth +%.4f win prob vs also playing greedy (0.5)\n\n",
+    const double br_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t_br).count();
+    printf("   W_br(0,0) = %.6f  => adapting is worth +%.4f win prob vs also playing greedy (0.5)\n",
            Wbr[0], Wbr[0] - 0.5);
+    printf("   best-response grid solved in %.2f s  (%.2f round_solve calls/state, closed-form self-loop)\n\n",
+           br_s, (double)solves / ((double)kT * kT));
 
     // push/safe behavior: win-optimal round at a mid-game total, behind vs ahead.
     printf("   push-when-behind / safe-when-ahead (your total ~110, vary the gap):\n");

@@ -103,22 +103,34 @@ inline void init_round_tables() {
     std::sort(g_order.begin(), g_order.end(), [](int a, int b) { return g_pc[a] > g_pc[b]; });
 }
 
-// max E[g(round score)] over within-round Hit/Stay policies; fills hit[] if set.
-inline double round_solve(const double* g, double* U, uint8_t* hit) {
+// max E[g(round score)] over within-round Hit/Stay policies. Optional outputs:
+//   hit[S]    the chosen policy (1 = Hit), if hit != nullptr
+//   B[S],b0   B[S] = dU[S]/dg[0]; b0 = B[0] = P(bust) under the optimal policy.
+// B/b0 let the win-probability self-loop (g[0] = base0 + D0*w, w = U[0]) be
+// solved in closed form: round_solve is linear in g[0] within a fixed policy
+// region, so w* = (U0 - B0*D0*w)/(1 - B0*D0) jumps to the exact fixed point and
+// the loop converges in ~1-2 solves instead of ~6-20 plain iterations.
+inline double round_solve(const double* g, double* U, uint8_t* hit = nullptr,
+                          double* B = nullptr, double* b0 = nullptr) {
     const double g0 = g[0];
     for (int S : g_order) {
         const int pc = g_pc[S];
-        if (pc == kFlip7Target) { U[S] = g[g_sum[S] + kFlip7Bonus]; continue; }
+        if (pc == kFlip7Target) { U[S] = g[g_sum[S] + kFlip7Bonus]; if (B) B[S] = 0.0; continue; }
         const double stay = g[g_sum[S]];
-        double acc = g_bustnum[S] * g0;
+        double accU = g_bustnum[S] * g0;            // bust branch: reward g[0]
+        double accB = B ? g_bustnum[S] : 0.0;       // d/dg0 of that branch
         for (unsigned nm = (~(unsigned)S) & 0x1FFFu; nm; nm &= nm - 1) {
             const int v = __builtin_ctz(nm);
-            acc += (double)numberCount(v) * U[S | (1u << v)];
+            const double c = (double)numberCount(v);
+            accU += c * U[S | (1u << v)];
+            if (B) accB += c * B[S | (1u << v)];
         }
-        const double hv = acc / (double)(kNumberDeckSize - pc);
-        if (hv > stay) { U[S] = hv;  if (hit) hit[S] = 1; }
-        else           { U[S] = stay; if (hit) hit[S] = 0; }
+        const double T = (double)(kNumberDeckSize - pc);
+        const double hv = accU / T;
+        if (hv > stay) { U[S] = hv;  if (hit) hit[S] = 1; if (B) B[S] = accB / T; }
+        else           { U[S] = stay; if (hit) hit[S] = 0; if (B) B[S] = (g_sum[S] == 0 ? 1.0 : 0.0); }
     }
+    if (b0) *b0 = B ? B[0] : 0.0;
     return U[0];
 }
 

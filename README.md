@@ -75,6 +75,34 @@ using a 34 GB open-addressing table. This count is not a surprise: it factors as
 54.99 of the 55 modes are reachable per config. Because of its size this DP is
 opt-in (`make all-cards` / `make test-all-cards`), separate from the fast suite.
 
+### Chapter 2 — what the optimal strategy actually is
+
+For the numbers-only game we can state the optimal policy in one line and measure
+how close simple rules come:
+
+> **Keep flipping until your chance of busting on the next card reaches ≈26%, then stop.**
+
+That single bust-probability threshold earns **99.8%** of the optimal expected
+score. By contrast, **"stop after k cards" is a poor rule** — the best fixed count
+(k=3) gets only **95.1%**. So the decision is driven by *risk*, not by how many
+cards you hold.
+
+| Simple rule | best setting | % of optimal |
+|---|---|---:|
+| stop at k unique cards | k = 3 | 95.1% |
+| stop at banked sum ≥ T | T = 23 | 99.76% |
+| stop at P(bust) ≥ θ | θ ≈ 0.26 | **99.81%** |
+
+The last ~0.2% is genuinely **non-separable** — no single threshold is exactly
+optimal. The clinching evidence: the optimal policy **hits** `{3,4,5,6,8,9}` at a
+**39.7%** bust risk (it's one card from the +15 Flip-7 bonus, worth the gamble) yet
+**stays** on `{10,12}` at only **26.0%** (two high cards, little upside). A
+higher-risk hand hits while a lower-risk hand stays — so the exact call needs the
+whole hand, not just one number. (For the full 94-card game the optimal policy is
+the billion-entry table, not a one-liner, but the same shape holds: Second Chance
+makes you push harder, big modifiers raise the stakes, and Freeze/Flip Three you
+can't control.)
+
 ## Build & run
 
 Requires a C++20 compiler (tested with Apple Clang on an Apple M4 Pro; the

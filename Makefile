@@ -27,12 +27,14 @@ HDRS := $(wildcard include/*.hpp)
 
 CH1  := $(BIN)/ch1_solitaire_turn
 CH1B := $(BIN)/ch1b_modifiers_sc
+CH2  := $(BIN)/ch2_separability
 ALL  := $(BIN)/solitaire_all_cards
 TST1 := $(BIN)/test_ch1
 TST1B:= $(BIN)/test_ch1b
+TST2 := $(BIN)/test_ch2
 TSTA := $(BIN)/test_all_cards
 
-all: $(CH1) $(CH1B) $(ALL) $(TST1) $(TST1B) $(TSTA)
+all: $(CH1) $(CH1B) $(CH2) $(ALL) $(TST1) $(TST1B) $(TST2) $(TSTA)
 	@echo "built with: $(CXX) $(MCPU)"
 
 $(BIN):
@@ -44,6 +46,9 @@ $(CH1): ch1_solitaire_turn/main.cpp $(HDRS) | $(BIN)
 $(CH1B): ch1b_modifiers_sc/main.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
+$(CH2): ch2_separability/main.cpp $(HDRS) | $(BIN)
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
 $(ALL): solitaire_all_cards/main.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
@@ -53,19 +58,26 @@ $(TST1): tests/test_ch1.cpp $(HDRS) | $(BIN)
 $(TST1B): tests/test_ch1b.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
+$(TST2): tests/test_ch2.cpp $(HDRS) | $(BIN)
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
 $(TSTA): tests/test_all_cards.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-# Fast headline numbers + tests (numbers, +modifiers, +Second Chance).
-run: $(CH1) $(CH1B)
+# Fast headline numbers + tests (numbers, +modifiers, +Second Chance, strategy).
+run: $(CH1) $(CH1B) $(CH2)
 	./$(CH1)
 	@echo
 	./$(CH1B)
+	@echo
+	./$(CH2)
 
-test: $(TST1) $(TST1B)
+test: $(TST1) $(TST1B) $(TST2)
 	./$(TST1)
 	@echo
 	./$(TST1B)
+	@echo
+	./$(TST2)
 
 # The complete 94-card solitaire DP is ~1e9 states (~30 GB, minutes to solve),
 # so it is opt-in rather than part of the fast run/test loop.

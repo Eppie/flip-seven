@@ -34,6 +34,8 @@ NASH := $(BIN)/ch4_nash
 CH5  := $(BIN)/ch5_actions
 ALL  := $(BIN)/solitaire_all_cards
 PROF := $(BIN)/profile
+PROFB := $(BIN)/profile_blocked
+PROFBI:= $(BIN)/profile_blocked_instr
 TST1 := $(BIN)/test_ch1
 TST1B:= $(BIN)/test_ch1b
 TST2 := $(BIN)/test_ch2
@@ -76,6 +78,12 @@ $(ALL): solitaire_all_cards/main.cpp $(HDRS) | $(BIN)
 # PMU profiler: vendored third_party/perf.h (Apple Silicon kperf, dlopen'd).
 $(PROF): perf/profile.cpp $(HDRS) third_party/perf.h | $(BIN)
 	$(CXX) $(CXXFLAGS) -Ithird_party -o $@ $<
+
+# Blocked all-94 DP re-profile: one source, two builds (PMU / logical counts).
+$(PROFB): perf/profile_blocked.cpp $(HDRS) third_party/perf.h | $(BIN)
+	$(CXX) $(CXXFLAGS) -Ithird_party -o $@ $<
+$(PROFBI): perf/profile_blocked.cpp $(HDRS) third_party/perf.h | $(BIN)
+	$(CXX) $(CXXFLAGS) -Ithird_party -DFLIP7_BLK_INSTR -o $@ $<
 
 $(TST1): tests/test_ch1.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
@@ -146,6 +154,14 @@ profile: $(PROF)
 	@echo "run 'sudo ./$(PROF)' for PMU counters; without root only wall-time prints."
 	./$(PROF)
 
+# Re-profile the >60 s blocked all-94 DP. Build both, then:
+#   sudo ./bin/profile_blocked cachewalk   (per-state cyc/IPC/misses/page-walks)
+#   sudo ./bin/profile_blocked branch      (branch mispredicts)
+#   ./bin/profile_blocked_instr            (logical memo fan-in / same-base split)
+profile-blocked: $(PROFB) $(PROFBI)
+	@echo "PMU (sudo): sudo ./$(PROFB) cachewalk | branch | exec"
+	@echo "logical   : ./$(PROFBI)"
+
 all-cards: $(ALL)
 	./$(ALL)
 
@@ -155,4 +171,4 @@ test-all-cards: $(TSTA)
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all run test competitive nash actions profile all-cards test-all-cards clean
+.PHONY: all run test competitive nash actions profile profile-blocked all-cards test-all-cards clean

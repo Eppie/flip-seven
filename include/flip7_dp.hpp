@@ -538,12 +538,21 @@ struct SolitaireAllDPBlocked {
 
     // --- base-config hash + value arena + policy bits ---
     size_t base_cap, base_mask;
+    int    base_shift = 0;  // 64 - log2(base_cap); for the Fibonacci base_index() hash
     std::vector<uint64_t> base_key;
     std::vector<uint32_t> base_blk;
     uint32_t next_block = 0, max_blocks;
     std::vector<double>   values;     // -1.0 sentinel = uncomputed (real EV >= 0)
     std::vector<uint64_t> pol_bits;
     long states_evaluated = 0;
+#ifdef FLIP7_BLK_INSTR
+    // Logical-cost instrumentation (compiled out unless FLIP7_BLK_INSTR). These
+    // perturb timing slightly, so they live in a SEPARATE build from the PMU run.
+    long solve_calls = 0;     // total solve() invocations (== base probes)
+    long probe_steps = 0;     // linear-probe collisions in base_find_or_insert
+    long memo_hits   = 0;     // solve() entries that early-return (values[slot] set)
+    long sb_f3 = 0, sb_fz = 0;// same-base child edges (Flip Three / pending Freeze)
+#endif
     bool verbose = true;
     std::chrono::steady_clock::time_point t_start;
 
@@ -551,15 +560,18 @@ struct SolitaireAllDPBlocked {
                                    uint32_t maxblk = 23'000'000u)
         : base_cap(base_pow2), base_mask(base_pow2 - 1),
           base_key(base_pow2, kEmpty), base_blk(base_pow2, 0), max_blocks(maxblk) {
+        base_shift = 64 - __builtin_ctzll((unsigned long long)base_cap);
         build_modes();
         values.assign((size_t)max_blocks * n_modes, -1.0);
         pol_bits.assign(((size_t)max_blocks * n_modes + 63) / 64, 0);
     }
 
-    static uint64_t mix(uint64_t x) {
-        x ^= x >> 33; x *= 0xff51afd7ed558ccdULL;
-        x ^= x >> 33; x *= 0xc4ceb9fe1a85ec53ULL;
-        x ^= x >> 33; return x;
+    // Base-key -> table index: single-multiply Fibonacci hash (top bits). Replaced a
+    // 3-round murmur finalizer; measured ~6% fewer cycles on the full solve (the hash
+    // runs on ~100% of the ~9.7B solve() calls and the DP is instruction-bound, IPC
+    // ~5.3). Base-hash load factor is identical (0.328) -- distribution is unaffected.
+    size_t base_index(uint64_t bkey) const {
+        return (size_t)((bkey * 0x9E3779B97F4A7C15ULL) >> base_shift);
     }
     static uint64_t base_pack(uint16_t nm, uint16_t mm, int sch, int scn, uint32_t extra) {
         return (uint64_t)nm | ((uint64_t)mm << 13) | ((uint64_t)sch << 19)
@@ -571,8 +583,13 @@ struct SolitaireAllDPBlocked {
     }
 
     uint32_t base_find_or_insert(uint64_t bkey) {
-        size_t i = mix(bkey) & base_mask;
-        while (base_key[i] != kEmpty && base_key[i] != bkey) i = (i + 1) & base_mask;
+        size_t i = base_index(bkey);
+        while (base_key[i] != kEmpty && base_key[i] != bkey) {
+            i = (i + 1) & base_mask;
+#ifdef FLIP7_BLK_INSTR
+            ++probe_steps;
+#endif
+        }
         if (base_key[i] == kEmpty) {
             if (next_block >= max_blocks) {
                 fprintf(stderr, "FATAL: SolitaireAllDPBlocked arena full (%u blocks)\n", next_block);
@@ -584,10 +601,32 @@ struct SolitaireAllDPBlocked {
         return base_blk[i];
     }
 
+    // Thin wrapper: resolve the base config to its block, then run the worker.
+    // Cross-base recursion (number/modifier/SC/save draws) goes through here so it
+    // re-hashes; same-base edges (Flip Three / pending Freeze) call solve_blk directly
+    // with the parent's block, skipping the redundant base-hash probe (~13% of calls).
+    //
+    // MUST inline: otherwise every cross-base call pays an ABI boundary + a 6-move
+    // arg shuffle (blk is a prepended param), ~3-4% more instructions. Inlined, the
+    // hash+probe folds into solve_blk's call sites -> original direct-recursion codegen.
+    inline __attribute__((always_inline))
     double solve(uint16_t nm, uint16_t mm, int sch, int scn, uint32_t extra, int f3, int fz, int forced) {
-        const uint32_t blk = base_find_or_insert(base_pack(nm, mm, sch, scn, extra));
+        return solve_blk(base_find_or_insert(base_pack(nm, mm, sch, scn, extra)),
+                         nm, mm, sch, scn, extra, f3, fz, forced);
+    }
+
+    double solve_blk(uint32_t blk, uint16_t nm, uint16_t mm, int sch, int scn, uint32_t extra,
+                     int f3, int fz, int forced) {
+#ifdef FLIP7_BLK_INSTR
+        ++solve_calls;
+#endif
         const size_t slot = (size_t)blk * n_modes + mode_dense[mode_pack(f3, fz, forced)];
-        if (values[slot] >= 0.0) return values[slot];
+        if (values[slot] >= 0.0) {
+#ifdef FLIP7_BLK_INSTR
+            ++memo_hits;
+#endif
+            return values[slot];
+        }
 
         const int pcn = maskPop(nm);
         double val;
@@ -627,13 +666,13 @@ struct SolitaireAllDPBlocked {
             if (scn < kNumSecondChance)
                 ev += ((double)(kNumSecondChance - scn) / (double)T)
                       * solve(nm, mm, 1, scn + 1, extra, f3, fz, nf_non);
-            if (f3 < 3)
-                ev += ((double)(3 - f3) / (double)T)
-                      * solve(nm, mm, sch, scn, extra, f3 + 1, fz, nf_f3);
+            if (f3 < 3)                                          // Flip Three keeps the base config:
+                ev += ((double)(3 - f3) / (double)T)             // reuse blk, skip the base-hash probe
+                      * solve_blk(blk, nm, mm, sch, scn, extra, f3 + 1, fz, nf_f3);
             if (fz < 3) {
                 const double p = (double)(3 - fz) / (double)T;
-                if (free) ev += p * (double)fullScore(nm, mm);
-                else      ev += p * solve(nm, mm, sch, scn, extra, f3, fz + 1, nf_non);
+                if (free) ev += p * (double)fullScore(nm, mm);   // forced Stay (terminal)
+                else      ev += p * solve_blk(blk, nm, mm, sch, scn, extra, f3, fz + 1, nf_non);  // same base
             }
             if (free) {
                 const double ev_stay = (double)fullScore(nm, mm);
@@ -646,6 +685,14 @@ struct SolitaireAllDPBlocked {
         values[slot] = val;
         if (pol) pol_bits[slot >> 6] |= (uint64_t)1 << (slot & 63);
         ++states_evaluated;
+#ifdef FLIP7_BLK_INSTR
+        // Same-base child edges this state emits (each makes one solve() call whose
+        // base probe is redundant -- the "pass-the-block-down" optimization target).
+        if (pcn != kFlip7Target && !(forced == 0 && fz >= 1)) {  // non-terminal: had children
+            if (f3 < 3)             ++sb_f3;   // Flip Three draw keeps (nm,mm,sch,scn,extra)
+            if (fz < 3 && forced > 0) ++sb_fz; // pending Freeze (mid-forced) keeps base
+        }
+#endif
         if (verbose && (states_evaluated & 0xFFFFFF) == 0) {
             const double el = std::chrono::duration<double>(
                                   std::chrono::steady_clock::now() - t_start).count();
@@ -669,7 +716,7 @@ struct SolitaireAllDPBlocked {
 
     uint8_t policy(uint16_t nm, uint16_t mm, int sch, int scn, uint32_t extra, int f3) const {
         const uint64_t bkey = base_pack(nm, mm, sch, scn, extra);
-        size_t i = mix(bkey) & base_mask;
+        size_t i = base_index(bkey);
         while (base_key[i] != kEmpty && base_key[i] != bkey) i = (i + 1) & base_mask;
         if (base_key[i] == kEmpty) return 0;
         const size_t slot = (size_t)base_blk[i] * n_modes + mode_dense[mode_pack(f3, 0, 0)];

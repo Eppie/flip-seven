@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
 using namespace flip7;
@@ -32,7 +33,123 @@ using clk = std::chrono::steady_clock;
 static double secs(clk::time_point a) { return std::chrono::duration<double>(clk::now() - a).count(); }
 static constexpr int kT = 200;
 
-int main() {
+// N-player adversarial targeting via the faithful 94-card real-rules tournament
+// (the ground truth). Part A (the value of an action by the target's hand) is
+// player-count independent -- it is about one target's hand -- so it is unchanged.
+// The exact win-probability targeting DP (Part B) stays 2-player (its idealized
+// "one free Flip Three per round" model); for arbitrary N the real-rules MC below
+// measures what adversarial targeting is actually worth against a field. Player 0
+// aims at the leader among active opponents (Freeze the match leader; Flip Three
+// the deepest opponent). A symmetric field gives each player 1/n.
+static int actions_nplayer(int n, int target) {
+    printf("=== Flip 7 - Chapter 5: adversarial targeting, %d players ===\n\n", n);
+
+    // ---- exact win-probability targeting DP (numbers-only), n==3 only ----
+    if (n == 3) {
+        std::vector<double> Uo; std::vector<uint8_t> hit;
+        numbers_opt_policy(Uo, hit);
+        std::vector<double> D(kRoundScoreMax + 1), De(kRoundScoreMax + 1), Dl(kRoundScoreMax + 1);
+        pmf_forced(0, 0, hit.data(), D.data());          // baseline round pmf
+        pmf_forced(0, 3, hit.data(), De.data());         // Flip3 @ start  (self gift)
+        pmf_flip3_at_stop(hit.data(), Dl.data());        // Flip3 @ stop   (opp attack)
+
+        printf("--- B. optimal Flip-Three target in first-to-%d, 3 players (exact win-prob DP) ---\n", target);
+        printf("   idealized: player 0 may aim one Flip Three per round at none / self / opp1 / opp2.\n");
+        const auto tB = clk::now();
+        std::vector<uint8_t> pol;
+        std::vector<double> W = win_prob_flip3_target_n3(D, De, Dl, target, &pol);
+        const size_t T = (size_t)target;
+        auto idx = [T](int a, int b, int c) { return ((size_t)a * T + b) * T + c; };
+        printf("   exact W(0,0,0) = %.5f  => one optimally-aimed Flip Three/round is worth +%.4f vs 1/3  [%.0f s]\n",
+               W[0], W[0] - 1.0 / 3.0, secs(tB));
+        const char* nm[4] = {"none", "self", "opp1", "opp2"};
+        auto tgt = [&](int a, int b, int c) {
+            if (a >= target || b >= target || c >= target) return;   // off-grid (small smoke targets)
+            printf("     you=%3d opp1=%3d opp2=%3d -> %s   W=%.4f\n", a, b, c, nm[pol[idx(a, b, c)]], W[idx(a, b, c)]);
+        };
+        printf("   targeting map (who to Flip Three; opp1/opp2 = the two opponents' totals):\n");
+        tgt(20, 20, 20); tgt(60, 110, 60); tgt(60, 60, 110); tgt(110, 160, 120); tgt(150, 120, 185);
+
+        // numbers-only MC cross-check: p0 follows the DP targeting policy each round.
+        auto cdf_of = [](const std::vector<double>& P) {
+            std::vector<double> c(P.size()); double s = 0;
+            for (size_t i = 0; i < P.size(); ++i) { s += P[i]; c[i] = s; } return c;
+        };
+        const std::vector<double> cD = cdf_of(D), cDe = cdf_of(De), cDl = cdf_of(Dl);
+        const uint64_t G = 2'000'000;
+        unsigned NT = std::thread::hardware_concurrency(); if (!NT) NT = 1;
+        std::vector<long> wins(NT, 0);
+        std::vector<std::thread> th;
+        const uint64_t chunk = (G + NT - 1) / NT;
+        for (unsigned t = 0; t < NT; ++t) {
+            const uint64_t g0 = (uint64_t)t * chunk, g1 = std::min(G, g0 + chunk);
+            if (g0 >= g1) break;
+            th.emplace_back([&, g0, g1, t] {
+                Xoshiro256pp r;
+                auto draw = [&](const std::vector<double>& c) {
+                    const double u = (r.next() >> 11) * 0x1.0p-53;
+                    return (int)(std::lower_bound(c.begin(), c.end(), u) - c.begin());
+                };
+                long lw = 0;
+                for (uint64_t gm = g0; gm < g1; ++gm) {
+                    uint64_t sm = 0xF1A3ULL + gm; r.seed(splitmix64(sm));
+                    int a = 0, b = 0, c = 0;
+                    for (int round = 0; round < 100000; ++round) {
+                        const uint8_t bp = (a < target && b < target && c < target) ? pol[idx(a, b, c)] : 0;
+                        a += draw(bp == 1 ? cDe : cD);
+                        b += draw(bp == 2 ? cDl : cD);
+                        c += draw(bp == 3 ? cDl : cD);
+                        const int mx = std::max(a, std::max(b, c));
+                        if (mx >= target) {
+                            const int tt[3] = {a, b, c}; int win = -1, ties = 0;
+                            for (int i = 0; i < 3; ++i) if (tt[i] == mx) { ties++; win = i; }
+                            if (ties == 1) { if (win == 0) ++lw; break; }
+                        }
+                    }
+                }
+                wins[t] = lw;
+            });
+        }
+        for (auto& x : th) x.join();
+        long w0 = 0; for (long v : wins) w0 += v;
+        printf("   [MC] win rate w/ DP targeting = %.5f  (DP %.5f)\n\n", (double)w0 / G, W[0]);
+    } else {
+        printf("   exact targeting DP omitted (exact only for n<=3); real-rules MC below.\n\n");
+    }
+
+    printf("--- C. real 94-card tournament: adversarial targeting vs a field ---\n");
+    SolitaireModDP mdp; mdp.optimal();
+    const int katt = 3;                                   // attack opponents holding >= 3 cards
+    const uint64_t G = 1'000'000;
+    auto rate = [](const DuelStats& s) { return s.p0_score / (double)s.games; };
+    std::vector<int> all_self(n, TP_SELF), all_rnd(n, TP_RANDOM), all_adv(n, TP_ADVERSARIAL);
+    std::vector<int> adv_vs_rnd = all_rnd;  adv_vs_rnd[0]  = TP_ADVERSARIAL;
+    std::vector<int> adv_vs_self = all_self; adv_vs_self[0] = TP_ADVERSARIAL;
+    const auto t0 = clk::now();
+    DuelStats sAr = run_tournament(mdp, adv_vs_rnd,  katt, target, G, 0xC5A1ULL);
+    DuelStats sAs = run_tournament(mdp, adv_vs_self, katt, target, G, 0xC5A2ULL);
+    DuelStats sRR = run_tournament(mdp, all_rnd,     katt, target, G, 0xC5A3ULL);
+    DuelStats sAA = run_tournament(mdp, all_adv,     katt, target, G, 0xC5A4ULL);
+    const double se = std::sqrt((1.0 / n) * (1.0 - 1.0 / n) / (double)G);
+    printf("   adversarial vs random field : %.4f  (+%.4f vs 1/%d, se~%.4f)\n", rate(sAr), rate(sAr) - 1.0 / n, n, se);
+    printf("   adversarial vs self  field  : %.4f  (+%.4f vs 1/%d)\n", rate(sAs), rate(sAs) - 1.0 / n, n);
+    printf("   random field (sanity)       : %.4f  (~1/%d = %.4f)\n", rate(sRR), n, 1.0 / n);
+    printf("   all-adversarial (sanity)    : %.4f  (~1/%d = %.4f)\n", rate(sAA), n, 1.0 / n);
+    printf("   per game ~%.1f rounds; aimed Freeze at opp %.0f%%, Flip3 at opp %.0f%% (attack opp pop>=%d)\n",
+           (double)sAr.rounds / sAr.games,
+           sAr.freezes ? 100.0 * sAr.freeze_at_opp / sAr.freezes : 0.0,
+           sAr.flip3s ? 100.0 * sAr.flip3_at_opp / sAr.flip3s : 0.0, katt);
+    printf("   %llu games/matchup in %.2f s\n", (unsigned long long)G, secs(t0));
+    return 0;
+}
+
+int main(int argc, char** argv) {
+    if (argc > 1 && strncmp(argv[1], "players=", 8) == 0) {
+        const int n = atoi(argv[1] + 8);
+        const int target = (argc > 2) ? atoi(argv[2]) : kT;
+        init_round_tables();
+        return actions_nplayer(n, target);
+    }
     printf("=== Flip 7 - Chapter 5: adversarial action-card targeting ===\n\n");
     init_round_tables();
     constexpr int N = 1 << kNumValues;

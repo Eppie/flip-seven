@@ -263,4 +263,12 @@ tests/                      DP-vs-MC asserts, golden enumeration, RNG/shuffle st
 5. Chapter 4 — first-to-200 win DP, best response, fictitious-play Nash, MC tournament.
 6. Chapter 5 — action-card adversarial targeting inside the competitive model.
 7. Later — NEON kernels where regular, multithreading across games.
+8. **Arbitrary players (done).** The competitive layer generalizes to any *n*: exact
+   win-probability / best-response DP for n≤3 (the joint-total state is `target^n`,
+   tractable only through n=3), Monte-Carlo beyond. The exact n=3 grids and the MC
+   tournament are multithreaded (per-layer parallelism; per-game-seeded MC, so
+   results are thread-count-independent). Symmetric value is 1/n by symmetry,
+   reproduced exactly at n=3; the 2-player headline numbers are preserved (the
+   generic code is validated against the frozen 2-player path). See the README
+   "Arbitrary number of players" section.
 ```

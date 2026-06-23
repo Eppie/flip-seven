@@ -20,7 +20,7 @@ else
   MCPU := -march=native
 endif
 
-CXXFLAGS := $(STD) $(OPT) $(WARN) $(INC) $(MCPU)
+CXXFLAGS := $(STD) $(OPT) $(WARN) $(INC) $(MCPU) -pthread
 
 BIN  := bin
 HDRS := $(wildcard include/*.hpp)
@@ -149,6 +149,23 @@ nash: $(NASH)
 actions: $(CH5)
 	./$(CH5)
 
+# N-player generalizations (the 2-player chapters above are unchanged). The exact
+# win-probability DP is parallelized across cores; it is exact for n<=3 and
+# Monte-Carlo beyond. Run the binaries directly to pick n / target, e.g.:
+#   ./bin/ch4_competitive N [target]     (greedy + best-response, exact for N<=3)
+#   ./bin/ch4_nash players=N [target]    (symmetric value 1/N, MC-confirmed)
+#   ./bin/ch5_actions players=N [target] (real-rules targeting vs an N-field)
+# competitive-3p runs the full exact 3-player first-to-200 (greedy ~1 min,
+# best-response several min, both threaded).
+competitive-3p: $(CH4)
+	./$(CH4) 3
+competitive-4p: $(CH4)
+	./$(CH4) 4
+nash-3p: $(NASH)
+	./$(NASH) players=3
+actions-3p: $(CH5)
+	./$(CH5) players=3
+
 # PMU profiling of the hot kernels (needs root to program counters).
 profile: $(PROF)
 	@echo "run 'sudo ./$(PROF)' for PMU counters; without root only wall-time prints."
@@ -171,4 +188,4 @@ test-all-cards: $(TSTA)
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all run test competitive nash actions profile profile-blocked all-cards test-all-cards clean
+.PHONY: all run test competitive competitive-3p competitive-4p nash nash-3p actions actions-3p profile profile-blocked all-cards test-all-cards clean

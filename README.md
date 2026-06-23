@@ -232,6 +232,53 @@ real 94-card 2-player game (`make actions`).
   they must. Numbers-only exact layer (Parts A–B) is in the fast test suite; Part C
   is the faithful-rules Monte-Carlo ground truth.
 
+### Arbitrary number of players
+
+The competitive analysis generalizes from 2 players to any *n*. The single-turn
+solitaire DP is player-count-independent; the across-rounds machinery is the part
+that scales. Where the win-probability DP stays **exact** is set by the joint-total
+state, which is `target^n` cells: 40 K at n=2, 8 M at n=3, intractable beyond. So:
+
+| layer | n=2 | n=3 | n≥4 |
+|---|---|---|---|
+| greedy win grid | exact | **exact** (`win_prob_greedy_n`) | Monte-Carlo |
+| best response vs field | exact | **exact** (`best_response_grid_n`) | Monte-Carlo |
+| Flip-Three targeting (idealized) | exact | **exact** (`win_prob_flip3_target_n3`) | MC |
+| symmetric Nash | exact (fictitious play) | value 1/n by symmetry, MC-confirmed | MC |
+| real 94-card targeting | MC | MC | MC |
+
+By symmetry the *value* of the symmetric game is exactly **1/n**, and the exact
+3-player grid reproduces it (`W(0,0,0) = 1/3` to 1e-9) — a clean cross-check the
+2-player case (0.5) can't distinguish from a coding error. Best-responding to a
+greedy field still beats the field: at n=3 a win-probability re-optimizer reaches
+**~0.44–0.46** (vs 1/3), and the real-rules adversarial-targeting edge persists as
+the table fills, diluting gracefully (+7%→+5.6%→+4.4% vs a random field at n=2→3→4;
++14%→+13.9%→+12.5% vs a naive field). Every exact n=3 number is confirmed by an
+independent Monte-Carlo tournament, and every symmetric n-player MC returns 1/n.
+
+The exact Flip-Three targeting DP also generalizes: with one optimally-aimed Flip
+Three per round, the 3-player win probability from `(0,0,0)` is **0.7916** (vs 1/3
+— worth **+0.458**), MC-confirmed at 0.7920, and the optimal aim is at the leading
+opponent. (As in the 2-player case this is an idealized one-free-Flip-Three-per-
+round model; the `~3/94` organic frequency is what the real 94-card tournament
+measures, where the targeting edge is the +5.6%/+13.9% above.)
+
+The exact n=3 grids are **parallelized across cores** (each coordinate-sum layer is
+independent), as is the Monte-Carlo (per-game-seeded, so results are reproducible
+regardless of thread count). Run them with:
+
+```
+./bin/ch4_competitive N [target]      # greedy + best response (exact for N<=3)
+./bin/ch4_nash players=N [target]     # symmetric value 1/N, MC-confirmed
+./bin/ch5_actions players=N [target]  # real-rules targeting vs an N-field
+make competitive-3p                   # the full exact 3-player first-to-200
+```
+
+The 2-player chapters, outputs, and asserted headline numbers are unchanged — the
+generic code is validated against the frozen 2-player path (`win_prob_greedy_n` at
+n=2 matches `win_prob_greedy` to <1e-9, and the n=2 best response reproduces
+`W_br(0,0)=0.5593`).
+
 ## Build & run
 
 Requires a C++20 compiler (tested with Apple Clang on an Apple M4 Pro; the
@@ -354,3 +401,9 @@ adversarial action-card targeting (exact Freeze/Flip-Three values, optimal
 targeting, and the real 94-card 2-player game). Every headline number is produced
 by an exact DP and independently confirmed by Monte-Carlo, per the project's
 discipline.
+
+The competitive analysis further extends to **an arbitrary number of players**: the
+win-probability DP is exact for up to 3 players (parallelized across cores) and
+Monte-Carlo beyond, with the symmetric value 1/n reproduced exactly at n=3 and
+every result cross-checked by an n-player tournament (see *Arbitrary number of
+players* above). The 2-player headline numbers are unchanged.

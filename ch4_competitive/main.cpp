@@ -12,6 +12,7 @@
 #include "flip7_compete.hpp"
 #include "flip7_core.hpp"
 #include "flip7_dp.hpp"
+#include "flip7_duel.hpp"
 #include "flip7_rng.hpp"
 
 #include <algorithm>
@@ -19,11 +20,176 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 using namespace flip7;
 
 static constexpr int kT = 200;  // target
+
+// ===================================================================== N players
+// Competitive first-to-target for n >= 3: exact win-probability DP for n == 3
+// (Monte-Carlo beyond), each result cross-checked by an independent numbers-only
+// MC tournament. The 2-player chapter below is unchanged (it is the validated
+// headline path); this generalizes it in place via win_prob_greedy_n /
+// best_response_grid_n in flip7_compete.hpp. A symmetric field has value 1/n.
+static int competitive_nplayer(int n, int target) {
+    printf("=== Flip 7 - Chapter 4: competitive first-to-%d, %d players ===\n\n", target, n);
+    init_round_tables();
+    const std::vector<double> D = round_pmf_numbers();
+    const auto sup = pmf_support(D);
+    double mean = 0; for (int s = 0; s < (int)D.size(); ++s) mean += s * D[s];
+    printf("numbers-only round: mean=%.4f  P(bust)=%.5f\n\n", mean, D[0]);
+
+    // sampler for the numbers-only MC tournaments
+    std::vector<double> cdfD(sup.size());
+    { double c = 0; for (size_t i = 0; i < sup.size(); ++i) { c += D[sup[i]]; cdfD[i] = c; } }
+    Xoshiro256pp rng; rng.seed(0xC0FFEE5ULL);
+    auto u01 = [&] { return (rng.next() >> 11) * 0x1.0p-53; };
+    auto draw_greedy = [&] {
+        const double u = u01();
+        size_t i = (size_t)(std::lower_bound(cdfD.begin(), cdfD.end(), u) - cdfD.begin());
+        return sup[std::min(i, sup.size() - 1)];
+    };
+    // play one numbers-only game; players[0..n) draw from per-player samplers.
+    auto play_numbers_game = [&](auto&& draw_for) -> int {
+        std::vector<long> tot(n, 0);
+        for (int round = 0; round < 100000; ++round) {
+            for (int i = 0; i < n; ++i) tot[i] += draw_for(i, tot);
+            long mx = -1; for (int i = 0; i < n; ++i) mx = std::max(mx, tot[i]);
+            if (mx >= target) {
+                int winner = -1, ties = 0;
+                for (int i = 0; i < n; ++i) if (tot[i] == mx) { ties++; winner = i; }
+                if (ties == 1) return winner;
+            }
+        }
+        return -1;
+    };
+
+    // ---- greedy field: exact grid (n<=3) + MC ----
+    printf("--- greedy field (everyone maximizes E[score]) ---\n");
+    if (n <= 3) {
+        std::vector<std::vector<double>> Ds(n, D);
+        const auto tg = std::chrono::steady_clock::now();
+        std::vector<double> Wg = win_prob_greedy_n(Ds, target);
+        const double gs = std::chrono::duration<double>(std::chrono::steady_clock::now() - tg).count();
+        printf("   exact W(0,..,0) = %.6f  (symmetry => 1/%d = %.6f)   [%.1f s]\n",
+               Wg[0], n, 1.0 / n, gs);
+    } else {
+        printf("   exact grid intractable at n=%d (target^%d states); Monte-Carlo only.\n", n, n);
+    }
+    {
+        const uint64_t G = 2'000'000; long w0 = 0; double nd = 0;
+        for (uint64_t g = 0; g < G; ++g) {
+            const int r = play_numbers_game([&](int, const std::vector<long>&) { return draw_greedy(); });
+            if (r == 0) ++w0; else if (r < 0) nd += 1.0 / n;
+        }
+        printf("   [MC] player-0 win rate (all greedy) = %.5f  (expect 1/%d = %.5f)\n\n",
+               (w0 + nd) / G, n, 1.0 / n);
+    }
+
+    // ---- best response: exact (n==3) + on-the-fly MC; MC-only beyond ----
+    printf("--- player 0 best-responds to a greedy field ---\n");
+    if (n == 3) {
+        const auto tb = std::chrono::steady_clock::now();
+        std::vector<double> Wbr = best_response_grid_n(D, target, n);
+        const double bs = std::chrono::duration<double>(std::chrono::steady_clock::now() - tb).count();
+        const size_t T = (size_t)target;
+        auto idx = [T](int a, int b, int c) { return ((size_t)a * T + b) * T + c; };
+        printf("   exact W_br(0,0,0) = %.6f  => adapting is worth +%.4f vs greedy (1/3)  [%.0f s]\n",
+               Wbr[0], Wbr[0] - 1.0 / 3.0, bs);
+
+        // on-the-fly MC cross-check: p0 plays the win-optimal round each round
+        // (its policy is recomputed from Wbr at the live standings). Parallel over
+        // games, per-thread scratch + per-game-seeded RNG (reproducible).
+        const double selfprob = D[0] * D[0];
+        const uint64_t G = 200'000;
+        unsigned NT = std::thread::hardware_concurrency(); if (!NT) NT = 1;
+        std::vector<long> wins(NT, 0);
+        std::vector<std::thread> mcth;
+        const uint64_t mcchunk = (G + NT - 1) / NT;
+        for (unsigned t = 0; t < NT; ++t) {
+            const uint64_t g0 = (uint64_t)t * mcchunk, g1 = std::min(G, g0 + mcchunk);
+            if (g0 >= g1) break;
+            mcth.emplace_back([&, g0, g1, t] {
+                std::vector<double> U(1 << kNumValues), gvec(kRoundScoreMax + 1), rd(kRoundScoreMax + 1);
+                std::vector<uint8_t> hit(1 << kNumValues);
+                Xoshiro256pp r;
+                auto u01t = [&] { return (r.next() >> 11) * 0x1.0p-53; };
+                auto draw_sup = [&](const std::vector<double>& P) {
+                    const double u = u01t(); double cc = 0;
+                    for (int s = 0; s < (int)P.size(); ++s) { cc += P[s]; if (u < cc) return s; } return 0;
+                };
+                auto draw_greedy_t = [&] {
+                    const double u = u01t();
+                    size_t i = (size_t)(std::lower_bound(cdfD.begin(), cdfD.end(), u) - cdfD.begin());
+                    return sup[std::min(i, sup.size() - 1)];
+                };
+                auto p0_round_pmf = [&](long a, long b, long c) -> const std::vector<double>& {
+                    for (int x = 0; x <= kRoundScoreMax; ++x) {
+                        const long A = a + x; double gx = 0.0;
+                        for (int y : sup) { const long B = b + y; const double dy = D[y];
+                            for (int z : sup) {
+                                const long C = c + z; const double p = dy * D[z];
+                                if (A >= target || B >= target || C >= target) {
+                                    const long M = std::max(A, std::max(B, C));
+                                    if (A == M) gx += p / ((A == M) + (B == M) + (C == M));
+                                } else gx += p * Wbr[idx((int)A, (int)B, (int)C)];
+                            }
+                        }
+                        gvec[x] = gx;
+                    }
+                    const double base0 = gvec[0];
+                    const double w = (a < target && b < target && c < target) ? Wbr[idx((int)a, (int)b, (int)c)] : 0.0;
+                    gvec[0] = base0 + selfprob * w;
+                    round_solve(gvec.data(), U.data(), hit.data());
+                    round_dist(hit.data(), rd.data());
+                    return rd;
+                };
+                long lw = 0;
+                for (uint64_t gm = g0; gm < g1; ++gm) {
+                    uint64_t sm = 0xBE57ULL + gm; r.seed(splitmix64(sm));
+                    long t0 = 0, t1 = 0, t2 = 0;
+                    for (int round = 0; round < 100000; ++round) {
+                        const std::vector<double>& pp = (t0 < target && t1 < target && t2 < target)
+                            ? p0_round_pmf(t0, t1, t2) : D;
+                        t0 += draw_sup(pp); t1 += draw_greedy_t(); t2 += draw_greedy_t();
+                        const long mx = std::max(t0, std::max(t1, t2));
+                        if (mx >= target) {
+                            const long tt[3] = {t0, t1, t2}; int win = -1, ties = 0;
+                            for (int i = 0; i < 3; ++i) if (tt[i] == mx) { ties++; win = i; }
+                            if (ties == 1) { if (win == 0) ++lw; break; }
+                        }
+                    }
+                }
+                wins[t] = lw;
+            });
+        }
+        for (auto& x : mcth) x.join();
+        long w0 = 0; for (long v : wins) w0 += v;
+        printf("   [MC] best-response win rate vs greedy field = %.5f  (DP %.5f)\n\n",
+               (double)w0 / G, Wbr[0]);
+    } else {
+        printf("   exact best-response grid intractable at n=%d; (MC adaptive policy not modeled here).\n\n", n);
+    }
+
+    // ---- full real-rules 94-card tournament: adversarial targeting value ----
+    printf("--- real 94-card tournament: adversarial targeting vs a field ---\n");
+    SolitaireModDP mdp; mdp.optimal();
+    const int katt = 3;
+    const uint64_t G = 300'000;
+    std::vector<int> all_self(n, TP_SELF), all_rnd(n, TP_RANDOM);
+    std::vector<int> adv_vs_self = all_self; adv_vs_self[0] = TP_ADVERSARIAL;
+    std::vector<int> adv_vs_rnd  = all_rnd;  adv_vs_rnd[0]  = TP_ADVERSARIAL;
+    auto rate = [](const DuelStats& s) { return s.p0_score / (double)s.games; };
+    DuelStats sR = run_tournament(mdp, all_rnd,      katt, target, G, 0xD1ULL);
+    DuelStats sAr = run_tournament(mdp, adv_vs_rnd,  katt, target, G, 0xD2ULL);
+    DuelStats sAs = run_tournament(mdp, adv_vs_self, katt, target, G, 0xD3ULL);
+    printf("   symmetric random field : %.4f  (sanity ~1/%d=%.4f)\n", rate(sR), n, 1.0 / n);
+    printf("   adversarial vs random  : %.4f  (+%.4f vs 1/%d)\n", rate(sAr), rate(sAr) - 1.0 / n, n);
+    printf("   adversarial vs self    : %.4f  (+%.4f vs 1/%d)\n", rate(sAs), rate(sAs) - 1.0 / n, n);
+    return 0;
+}
 // The within-round solver (init_round_tables / round_solve / round_dist) lives
 // in flip7_compete.hpp so both this program and the profiler can use it.
 
@@ -40,7 +206,11 @@ static void competitive_summary(const char* label, const std::vector<double>& D,
            wg(0, 0), wg(std::max(1, (int)mean), 0), wg(118, 100), wg(180, 162));
 }
 
-int main() {
+int main(int argc, char** argv) {
+    const int n      = (argc > 1) ? atoi(argv[1]) : 2;   // players (default 2)
+    const int target = (argc > 2) ? atoi(argv[2]) : kT;  // first-to-target (default 200)
+    if (n >= 3) return competitive_nplayer(n, target);
+    // n == 2: the original validated headline path (unchanged output).
     printf("=== Flip 7 - Chapter 4: competitive first-to-200 ===\n\n");
     init_round_tables();
 

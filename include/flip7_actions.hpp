@@ -207,6 +207,79 @@ inline std::vector<double> win_prob_flip3_target(
     return W;
 }
 
+// Exact 3-player Flip-Three targeting grid. Player 0 may aim one Flip Three each
+// round at: none (everyone plays D), self (player 0 plays the gift pmf De), opp 1
+// (opponent 1 plays the attacked pmf Dl), or opp 2 (opponent 2 plays Dl); everyone
+// else plays D. Returns W over the 3-D grid (idx (a*target+b)*target+c) =
+// P(player 0 wins); polOut, if given, gets the chosen target per state
+// (0 none / 1 self / 2 opp1 / 3 opp2). Same outcome/self-loop rules as
+// win_prob_greedy_n; parallelized per coordinate-sum layer. init_round_tables()
+// is not required here (this is a pure pmf-level DP). For n=2 use the frozen
+// win_prob_flip3_target above.
+inline std::vector<double> win_prob_flip3_target_n3(
+        const std::vector<double>& D, const std::vector<double>& De,
+        const std::vector<double>& Dl, int target, std::vector<uint8_t>* polOut = nullptr) {
+    auto support = [](const std::vector<double>& P) {
+        std::vector<int> s;
+        for (int i = 0; i < (int)P.size(); ++i) if (P[i] > 0) s.push_back(i);
+        return s;
+    };
+    const auto sD = support(D), sDe = support(De), sDl = support(Dl);
+    const size_t T = (size_t)target;
+    std::vector<double>  W(T * T * T, 0.0);
+    std::vector<uint8_t> pol(T * T * T, 0);
+    auto idx = [T](int a, int b, int c) { return ((size_t)a * T + b) * T + c; };
+
+    // value of one option: player pmfs (pa,pb,pc) with their supports.
+    auto optval = [&](int a, int b, int c,
+                      const std::vector<double>& pa, const std::vector<int>& sa,
+                      const std::vector<double>& pb, const std::vector<int>& sb,
+                      const std::vector<double>& pc, const std::vector<int>& sc) {
+        double num = 0.0;
+        const double self = pa[0] * pb[0] * pc[0];
+        for (int x : sa) { const int A = a + x; const double px = pa[x];
+            for (int y : sb) { const int B = b + y; const double pxy = px * pb[y];
+                for (int z : sc) {
+                    if (x == 0 && y == 0 && z == 0) continue;     // all-bust self-loop
+                    const int C = c + z; const double p = pxy * pc[z];
+                    if (A >= target || B >= target || C >= target) {
+                        const int M = std::max(A, std::max(B, C));
+                        if (A == M) num += p / ((A == M) + (B == M) + (C == M));
+                    } else {
+                        num += p * W[idx(A, B, C)];
+                    }
+                }
+            }
+        }
+        return num / (1.0 - self);
+    };
+
+    for (int S = 3 * (target - 1); S >= 0; --S) {
+        const int alo = std::max(0, S - 2 * (target - 1)), ahi = std::min(target - 1, S);
+        parallel_chunks(alo, ahi, [&](int as, int ae) {           // layer S: cells independent
+          for (int a = as; a <= ae; ++a) {
+            const int rem = S - a;
+            const int blo = std::max(0, rem - (target - 1)), bhi = std::min(target - 1, rem);
+            for (int b = blo; b <= bhi; ++b) {
+                const int c = rem - b;
+                const double vn = optval(a, b, c, D, sD, D, sD, D, sD);     // none
+                const double vs = optval(a, b, c, De, sDe, D, sD, D, sD);   // gift self
+                const double v1 = optval(a, b, c, D, sD, Dl, sDl, D, sD);   // attack opp 1
+                const double v2 = optval(a, b, c, D, sD, D, sD, Dl, sDl);   // attack opp 2
+                double best = vn; uint8_t bp = 0;
+                if (vs > best) { best = vs; bp = 1; }
+                if (v1 > best) { best = v1; bp = 2; }
+                if (v2 > best) { best = v2; bp = 3; }
+                W[idx(a, b, c)] = best;
+                pol[idx(a, b, c)] = bp;
+            }
+          }
+        });
+    }
+    if (polOut) *polOut = std::move(pol);
+    return W;
+}
+
 // --- independent numbers-only MC validator (force-injection) ------------------
 // mode: 0 = optimal play (no injection); 1 = forced 3 draws at the START; 2 =
 // forced 3 draws at the FIRST natural Stay point. Draws WITHOUT replacement from a

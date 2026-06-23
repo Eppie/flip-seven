@@ -12,6 +12,7 @@
 //   usage: ch4_nash [iterations] [damping]
 #include "flip7_compete.hpp"
 #include "flip7_core.hpp"
+#include "flip7_duel.hpp"
 #include "flip7_rng.hpp"
 
 #include <algorithm>
@@ -20,6 +21,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 using namespace flip7;
@@ -27,7 +29,33 @@ using namespace flip7;
 static constexpr int kT = 200;
 static constexpr int kSn = kRoundScoreMax + 1;  // per-state pmf stride
 
+// n >= 3: the symmetric first-to-target game still has value 1/n by symmetry, but
+// the exact equilibrium-POLICY grid is intractable -- the belief tensor alone is
+// target^n * (kRoundScoreMax+1) doubles (~5 GB at n=3, target=200) and a single
+// fictitious-play iteration is ~hours. We report the symmetric value and confirm
+// it with a symmetric Monte-Carlo tournament; the push-when-behind / safe-when-
+// ahead *shape* of the equilibrium is the n=2 schedule, qualitatively unchanged.
+static int nash_nplayer(int n, int target) {
+    printf("=== Flip 7 - Chapter 4: %d-player first-to-%d equilibrium ===\n", n, target);
+    printf("Symmetric game => Nash value is 1/%d by symmetry. The exact equilibrium\n", n);
+    printf("policy grid is intractable at n>=3 (target^%d belief tensor, ~hours/solve);\n", n);
+    printf("we confirm the value with a symmetric Monte-Carlo tournament.\n\n");
+    SolitaireModDP mdp; mdp.optimal();
+    const uint64_t G = 2'000'000;
+    DuelStats s = run_tournament(mdp, std::vector<int>(n, TP_RANDOM), 3, target, G, 0x4A5411ULL);
+    printf("[MC] symmetric field: player-0 win rate = %.5f  (expect 1/%d = %.5f)\n",
+           s.p0_score / (double)s.games, n, 1.0 / n);
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    // Optional first arg "players=N" routes to the N-player path; otherwise the
+    // original 2-player fictitious-play interface (iters, damping) is preserved.
+    if (argc > 1 && strncmp(argv[1], "players=", 8) == 0) {
+        const int n = atoi(argv[1] + 8);
+        const int target = (argc > 2) ? atoi(argv[2]) : kT;
+        return nash_nplayer(n, target);
+    }
     int iters = (argc > 1) ? atoi(argv[1]) : 40;
     double damp = (argc > 2) ? atof(argv[2]) : 0.0;  // 0 => fictitious play (alpha=1/(k+1))
     printf("=== Flip 7 - Chapter 4: symmetric Nash equilibrium (numbers-only) ===\n");

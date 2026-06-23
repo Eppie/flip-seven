@@ -112,6 +112,16 @@ int main() {
     check(W[0] > 0.5, "a free Flip Three each round is worth > 0.5 at the start");
     check(pol[(size_t)50 * kT + 150] == 2, "when behind, aim the Flip Three at the opponent");
 
+    // 3-player exact targeting DP (small target for speed): beats the 1/3 baseline,
+    // and at a symmetric start the optimal aim is at an opponent (policy 2 or 3).
+    {
+        const int T3 = 40;
+        std::vector<uint8_t> p3;
+        const auto W3 = win_prob_flip3_target_n3(D, De, Dl, T3, &p3);
+        check(W3[0] > 1.0 / 3.0, "3-player: a free Flip Three each round beats 1/3");
+        check(p3[0] == 2 || p3[0] == 3, "3-player: at a symmetric start, aim the Flip Three at an opponent");
+    }
+
     printf("%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASSED", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;
 }

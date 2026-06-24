@@ -38,6 +38,8 @@ VENG := $(BIN)/vengeance
 PROF := $(BIN)/profile
 PROFB := $(BIN)/profile_blocked
 PROFBI:= $(BIN)/profile_blocked_instr
+PROFV := $(BIN)/profile_vengeance
+PROFVI:= $(BIN)/profile_vengeance_instr
 TST1 := $(BIN)/test_ch1
 TST1B:= $(BIN)/test_ch1b
 TST2 := $(BIN)/test_ch2
@@ -102,6 +104,12 @@ $(PROFB): perf/profile_blocked.cpp $(HDRS) third_party/perf.h | $(BIN)
 	$(CXX) $(CXXFLAGS) -Ithird_party -o $@ $<
 $(PROFBI): perf/profile_blocked.cpp $(HDRS) third_party/perf.h | $(BIN)
 	$(CXX) $(CXXFLAGS) -Ithird_party -DFLIP7_BLK_INSTR -o $@ $<
+
+# Vengeance MC profiler: PMU build + logical-instrumentation build.
+$(PROFV): perf/profile_vengeance.cpp $(HDRS) third_party/perf.h | $(BIN)
+	$(CXX) $(CXXFLAGS) -Ithird_party -o $@ $<
+$(PROFVI): perf/profile_vengeance.cpp $(HDRS) third_party/perf.h | $(BIN)
+	$(CXX) $(CXXFLAGS) -Ithird_party -DFLIP7_VENG_INSTR -o $@ $<
 
 $(TST1): tests/test_ch1.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
@@ -225,6 +233,14 @@ profile-blocked: $(PROFB) $(PROFBI)
 	@echo "PMU (sudo): sudo ./$(PROFB) cachewalk | branch | exec"
 	@echo "logical   : ./$(PROFBI)"
 
+# Vengeance Monte-Carlo profiling: runs the logical build now, then prints the
+# sudo command for the hardware counters.
+profile-vengeance: $(PROFV) $(PROFVI)
+	./$(PROFVI)
+	@echo
+	@echo "hardware counters (IPC / cache / branch) need root:"
+	@echo "    sudo ./$(PROFV)"
+
 all-cards: $(ALL)
 	./$(ALL)
 
@@ -234,4 +250,4 @@ test-all-cards: $(TSTA)
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all help run test decide vengeance competitive competitive-3p competitive-4p nash nash-3p actions actions-3p profile profile-blocked all-cards test-all-cards clean
+.PHONY: all help run test decide vengeance competitive competitive-3p competitive-4p nash nash-3p actions actions-3p profile profile-blocked profile-vengeance all-cards test-all-cards clean

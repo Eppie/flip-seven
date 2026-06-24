@@ -292,7 +292,11 @@ targeting are documented heuristics (Vengeance is unsolved), but the engine is
 unbiased: a **symmetric field gives each player 1/n** (the sanity check). With the
 extra take-that, an adversarial player who aims at the leader gains even more than in
 the original — **roughly +0.23 win probability vs a naive field and +0.12 vs a random
-field at a 2-player table**, diluting toward +0.18 / +0.06 by six players.
+field at a 2-player table**, diluting toward +0.18 / +0.06 by six players. The engine
+runs at **~240 K games/s/core** (2-player); `make profile-vengeance` reports the
+per-game work breakdown (logical, no root) and the PMU counters (`sudo`, IPC / cache
+/ branch). Profiling showed the per-decision bust check dominated, so the remaining
+bust-card counts are tracked incrementally rather than rescanned (~2.7× faster).
 
 ### Decision oracle (`decide`)
 

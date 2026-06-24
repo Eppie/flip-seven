@@ -23,8 +23,20 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <thread>
 #include <vector>
+
+// Optional logical-cost instrumentation (compiled out unless FLIP7_VENG_INSTR).
+// Counts draws / decisions / deck-scan work / action frequencies / busts so the
+// hotspots can be attributed without a PMU (see perf/profile_vengeance.cpp). Like
+// FLIP7_BLK_INSTR, it perturbs timing, so it lives in a SEPARATE build from the
+// PMU run.
+#ifdef FLIP7_VENG_INSTR
+#define VINSTR(x) do { x; } while (0)
+#else
+#define VINSTR(x) do {} while (0)
+#endif
 
 namespace flip7 {
 
@@ -98,7 +110,25 @@ struct VengeanceGame {
     std::vector<long> total;
     std::vector<uint8_t> deck;
     int pos = 0;
+    int rem[14] = {0};      // remaining REGULAR number cards of each value 1..13 in the draw pile
     bool round_over = false;
+
+#ifdef FLIP7_VENG_INSTR
+    // per-run logical counters (mutable so the const wants_hit can tally scans)
+    mutable long ic_games = 0, ic_rounds = 0, ic_draws = 0, ic_decisions = 0, ic_scan = 0;
+    mutable long ic_busts = 0, ic_flip7 = 0, ic_swap_evals = 0, ic_act[5] = {0};
+    void instr_dump() const {
+        const double G = ic_games ? (double)ic_games : 1.0;
+        std::printf("  logical / game (n=%d):  rounds=%.2f  draws=%.1f  hit-decisions=%.1f\n",
+                    n, ic_rounds / G, ic_draws / G, ic_decisions / G);
+        std::printf("  wants_hit deck-scan:    %.0f card-reads/game  (%.1f per decision)\n",
+                    ic_scan / G, ic_decisions ? (double)ic_scan / ic_decisions : 0.0);
+        std::printf("  busts=%.2f/game  flip7=%.3f/game  swap-evals=%.1f/game\n",
+                    ic_busts / G, ic_flip7 / G, ic_swap_evals / G);
+        std::printf("  actions/game: JustOne=%.2f FlipFour=%.2f Swap=%.2f Steal=%.2f Discard=%.2f\n",
+                    ic_act[0] / G, ic_act[1] / G, ic_act[2] / G, ic_act[3] / G, ic_act[4] / G);
+    }
+#endif
 
     VengeanceGame(Xoshiro256pp& r, const std::vector<int>& tps)
         : rng(r), n((int)tps.size()), tp(tps), P(tps.size()), total(tps.size(), 0) {}
@@ -124,8 +154,15 @@ struct VengeanceGame {
             std::swap(deck[i], deck[j]);
         }
         pos = 0;
+        for (int v = 1; v <= 13; ++v) rem[v] = (v == 7) ? 6 : (v == 13) ? 12 : v;  // regular-number counts
     }
-    int draw_card() { return pos < (int)deck.size() ? deck[pos++] : -1; }
+    int draw_card() {
+        VINSTR(++ic_draws);
+        if (pos >= (int)deck.size()) return -1;
+        uint8_t c = deck[pos++];
+        if (c >= 1 && c <= 13) --rem[c];          // keep the remaining bust-card tally current
+        return c;
+    }
 
     bool active(int i) const { return P[i].status == VST_ACTIVE; }
     int  leader_other(int self) const {                       // highest-total non-busted opponent
@@ -151,10 +188,10 @@ struct VengeanceGame {
             q.cnt[13]++;
         } else {                                              // regular number 1..13
             int v = card;
-            if (q.cnt[v] + 1 > q.allowed(v)) { q.status = VST_BUSTED; return; }
+            if (q.cnt[v] + 1 > q.allowed(v)) { q.status = VST_BUSTED; VINSTR(++ic_busts); return; }
             q.cnt[v]++;
         }
-        if (q.status != VST_BUSTED && q.ncards() == kFlip7Target) { q.status = VST_FLIP7; round_over = true; }
+        if (q.status != VST_BUSTED && q.ncards() == kFlip7Target) { q.status = VST_FLIP7; round_over = true; VINSTR(++ic_flip7); }
     }
 
     // re-check a player for a duplicate bust after a Swap/Steal moved cards in.
@@ -240,6 +277,7 @@ struct VengeanceGame {
             s += val(pb, P[pb], B);
             return s;
         };
+        VINSTR(ic_swap_evals += (long)(slots.size() * slots.size()));
         double best = 0.0; int bpa = -1, bva = 0, bpb = -1, bvb = 0; bool found = false;
         for (size_t i = 0; i < slots.size(); ++i)
             for (size_t j = 0; j < slots.size(); ++j) {
@@ -289,6 +327,7 @@ struct VengeanceGame {
     }
 
     void resolve_action(int chooser, uint8_t card) {
+        VINSTR(++ic_act[card - VC_JUSTONE]);
         // who can be targeted? if no non-busted opponent, self where possible
         switch (card) {
             case VC_JUSTONE: {
@@ -322,17 +361,17 @@ struct VengeanceGame {
 
     // --- Hit/Stay: transparent one-step EV over the actual remaining deck ---
     bool wants_hit(int i) const {
+        VINSTR(++ic_decisions);
         const VPlayer& q = P[i];
         if (q.zero) return true;                               // The Zero forces hitting
         const int nc = q.ncards();
         if (nc == 0) return true;
-        // count bust cards still in the unseen draw pile
-        long remaining = 0, bust = 0;
-        for (int k = pos; k < (int)deck.size(); ++k) {
-            uint8_t c = deck[k]; remaining++;
-            if (c >= 1 && c <= 13) { int v = c; if (q.cnt[v] >= q.allowed(v)) bust++; }
-        }
-        if (remaining == 0) return false;
+        // bust cards remaining = regular copies of values held at their allowed limit,
+        // read from the incremental `rem` tally (no deck rescan).
+        const long remaining = (long)deck.size() - pos;
+        if (remaining <= 0) return false;
+        long bust = 0;
+        for (int v = 1; v <= 13; ++v) { VINSTR(++ic_scan); if (q.cnt[v] >= q.allowed(v)) bust += rem[v]; }
         const double pb = (double)bust / (double)remaining;
         const int sum = q.numsum();
         const double bonus = (nc == kFlip7Target - 1) ? (double)kFlip7Bonus : 0.0;  // one card from Flip 7
@@ -349,6 +388,7 @@ struct VengeanceGame {
     }
 
     void play_round(int starter) {
+        VINSTR(++ic_rounds);
         shuffle();
         round_over = false;
         for (int i = 0; i < n; ++i) { P[i].reset(); }
@@ -364,6 +404,7 @@ struct VengeanceGame {
     }
 
     int play_game(int target) {
+        VINSTR(++ic_games);
         for (int i = 0; i < n; ++i) total[i] = 0;
         int starter = 0;
         for (int round = 0; round < 1000; ++round) {

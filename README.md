@@ -457,3 +457,8 @@ cards seen so far, and any action card you hold) it returns the win-optimal Hit/
 a count-aware bust probability, and a targeting recommendation — composing the exact
 sub-results where they exist and Monte-Carlo where they don't (see *Decision oracle*
 above).
+
+## License
+
+MIT — see [`LICENSE`](LICENSE). The vendored Apple-Silicon PMU helper in
+`third_party/` carries its own license ([`third_party/perf.LICENSE`](third_party/perf.LICENSE)).

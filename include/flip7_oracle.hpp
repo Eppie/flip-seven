@@ -23,12 +23,10 @@
 // numbers-only (which number cards are gone -> bust risk); held modifiers ride the
 // score, opponents are the numbers-only field.
 #pragma once
-#include "flip7_actions.hpp"
-#include "flip7_compete.hpp"
+#include "flip7_actions.hpp"   // numbers_opt_policy, pmf_from_dist (targeting)
+#include "flip7_compete.hpp"   // best_response_grid_n, win_prob_greedy_n, round_solve
 #include "flip7_core.hpp"
-#include "flip7_dp.hpp"
-#include "flip7_duel.hpp"
-#include "flip7_rng.hpp"
+#include "flip7_rng.hpp"       // Xoshiro256pp (n>=4 Monte-Carlo)
 
 #include <algorithm>
 #include <cstdint>
@@ -50,7 +48,7 @@ struct OracleDecision {
     double ev_hit, ev_stay;   // expected round score of Hit vs Stay (count-aware)
     // targeting (only filled if you hold an action card)
     bool   has_action = false;
-    int    target = -1;       // -2 none, -1 self, >=0 opponent index
+    int    target = -2;       // -2 = use on no opponent, >=0 = opponent index
     double w_action = 0.0;    // your win prob after the recommended action
 };
 
@@ -100,9 +98,12 @@ struct Oracle {
     }
 
     // Value at start-of-round standings `t` (idx0 = you), exact grid or terminal.
+    // Totals are expected in [0,target); a total >= target is terminal. The floor
+    // at 0 is defensive -- the CLI already rejects negative totals.
     double grid_value(std::vector<int> t) const {
         bool term = false; for (int v : t) term |= (v >= target);
         if (term) { std::vector<long> l(t.begin(), t.end()); return outcome0(l); }
+        for (int& v : t) if (v < 0) v = 0;
         return W[gidx(t)];
     }
 
@@ -155,7 +156,7 @@ struct Oracle {
         };
         for (size_t ki = 0; ki < knots.size(); ++ki) {
             const int mt = knots[ki];
-            long wins = 0;
+            double wins = 0.0;  // outcome0 returns 1/k on a top tie, so accumulate fractionally
             for (uint64_t g = 0; g < G; ++g) {
                 std::vector<long> t(n);
                 t[0] = mt;
@@ -166,10 +167,9 @@ struct Oracle {
                     if (mx >= target) break;
                     for (int i = 0; i < n; ++i) t[i] += draw();
                 }
-                if (outcome0(t) >= 1.0) ++wins;  // count only clean wins (ties rare)
-                else if (outcome0(t) > 0) { /* tie share */ }
+                wins += outcome0(t);
             }
-            kv[ki] = (double)wins / (double)G;
+            kv[ki] = wins / (double)G;
         }
         for (size_t ki = 0; ki + 1 < knots.size(); ++ki) {
             const int a = knots[ki], b = knots[ki + 1];
@@ -336,10 +336,11 @@ struct Oracle {
         { double c = 0; for (size_t i = 0; i < supD.size(); ++i) { c += D[supD[i]]; cdfD[i] = c; } }
         Xoshiro256pp rng; rng.seed(0xA11CE5ULL);
         auto draw = [&](const std::vector<double>& P) {
-            const double u = (rng.next() >> 11) * 0x1.0p-53; double c = 0;
-            for (int s = 0; s < (int)P.size(); ++s) { c += P[s]; if (u < c) return s; } return 0;
+            const double u = (rng.next() >> 11) * 0x1.0p-53; double c = 0; int last = 0;
+            for (int s = 0; s < (int)P.size(); ++s) { if (P[s] > 0) last = s; c += P[s]; if (u < c) return s; }
+            return last;  // float round-off fall-through -> highest-mass index, not 0
         };
-        const uint64_t G = 20000; long wins = 0;
+        const uint64_t G = 20000; double wins = 0.0;
         for (uint64_t g = 0; g < G; ++g) {
             std::vector<long> t(n); t[0] = my_total;
             for (int o = 0; o < n - 1; ++o) t[o + 1] = act[o] ? opp[o] + draw(oppP[o]) : opp[o];
@@ -348,9 +349,9 @@ struct Oracle {
                 if (mx >= target) break;
                 for (int i = 0; i < n; ++i) t[i] += draw(D);
             }
-            if (outcome0(t) >= 1.0) ++wins;
+            wins += outcome0(t);
         }
-        return (double)wins / G;
+        return wins / G;
     }
 };
 

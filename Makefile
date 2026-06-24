@@ -118,6 +118,18 @@ $(TSTN): tests/test_neon.cpp $(HDRS) | $(BIN)
 $(TSTA): tests/test_all_cards.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
+help:
+	@echo "Flip 7 -- exact & competitive analysis. Common targets:"
+	@echo "  make            build everything into bin/"
+	@echo "  make test       build and run the full test suite"
+	@echo "  make run        print the Ch.1-3 headline numbers"
+	@echo "  make competitive / nash / actions   Ch.4-5 (2-player)"
+	@echo "  make competitive-3p / -4p, nash-3p, actions-3p   N-player"
+	@echo "  make decide     build+run the decision oracle (see ./bin/decide --help)"
+	@echo "  make all-cards  the full 94-card solitaire DP (heavy)"
+	@echo "  make profile    PMU profiling of the hot kernels (sudo for counters)"
+	@echo "  make clean"
+
 # Fast headline numbers + tests (Ch.1 progression, Ch.2 strategy, Ch.3 tails,
 # Ch.4 A-C win probabilities).
 run: $(CH1) $(CH1B) $(CH2) $(CH3)
@@ -206,4 +218,4 @@ test-all-cards: $(TSTA)
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all run test decide competitive competitive-3p competitive-4p nash nash-3p actions actions-3p profile profile-blocked all-cards test-all-cards clean
+.PHONY: all help run test decide competitive competitive-3p competitive-4p nash nash-3p actions actions-3p profile profile-blocked all-cards test-all-cards clean

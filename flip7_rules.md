@@ -118,9 +118,11 @@ additional rounds until one player is clearly ahead.
 
 ## Related edition
 
-There's also a standalone sequel, **Flip 7: With a Vengeance**, which adds new
-action/modifier cards (extra effects and higher-stakes plays). This document covers the
-**original Flip 7** only.
+There's also a standalone sequel, **Flip 7: With a Vengeance** — negative/÷2 modifiers
+played on opponents, Steal/Swap/Discard/Flip Four/Just One More, the Zero/Lucky 13/
+Unlucky 7 specials, and no Second Chance ("no one's safe"). Its full card list and
+rules are in [`flip7_vengeance_rules.md`](flip7_vengeance_rules.md). This document
+covers the **original Flip 7** only.
 
 ---
 

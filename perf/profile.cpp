@@ -155,15 +155,22 @@ int main() {
 
     // ---- Chapter 5 Part C: the full 94-card 2-player duel engine ----
     // Divergent control flow (status checks + targeting) + dense ModDP policy
-    // lookups: the new hot kernel, profiled per game (cache then branch).
-    std::printf("\n[chapter 5: 94-card 2-player duel] (per game)\n");
+    // lookups, profiled per game (cache then branch). run_duel is multithreaded
+    // (per-game seeding), which would hide the work from the thread-scoped PMU, so
+    // we drive a single Duel directly -- one game per iteration, per-game reseeded.
+    std::printf("\n[chapter 5: 94-card 2-player duel] (per game, single-threaded)\n");
     {
         SolitaireModDP mdp; mdp.optimal();
-        const uint64_t G = 100'000;
-        profile("duel adv-vs-random", CACHE_PROFILE,  (double)G, "game",
-                [&]{ volatile double s = run_duel(mdp, TP_ADVERSARIAL, TP_RANDOM, 3, 200, G, 11).p0_score; (void)s; });
-        profile("duel adv-vs-random", BRANCH_PROFILE, (double)G, "game",
-                [&]{ volatile double s = run_duel(mdp, TP_ADVERSARIAL, TP_RANDOM, 3, 200, G, 12).p0_score; (void)s; });
+        Xoshiro256pp drng;
+        Duel duel(mdp, drng, std::vector<int>{TP_ADVERSARIAL, TP_RANDOM}, 3, nullptr);
+        const uint64_t G = 200'000;
+        auto run = [&](uint64_t base) {
+            volatile int s = 0;
+            for (uint64_t g = 0; g < G; ++g) { uint64_t sm = base + g; drng.seed(splitmix64(sm)); s += duel.play_game(200); }
+            (void)s;
+        };
+        profile("duel adv-vs-random", CACHE_PROFILE,  (double)G, "game", [&]{ run(11); });
+        profile("duel adv-vs-random", BRANCH_PROFILE, (double)G, "game", [&]{ run(12); });
     }
 
     return 0;

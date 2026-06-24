@@ -375,7 +375,9 @@ struct VengeanceGame {
         const double pb = (double)bust / (double)remaining;
         const int sum = q.numsum();
         const double bonus = (nc == kFlip7Target - 1) ? (double)kFlip7Bonus : 0.0;  // one card from Flip 7
-        // hit iff expected gain beats expected loss (avg safe number ~6.5)
+        // hit iff expected gain beats expected loss (avg safe number ~6.5). (The
+        // per-decision FP divide here is NOT on the critical path -- cross-multiplying
+        // it away measured neutral-to-worse, as the OoO core hides its latency.)
         return (1.0 - pb) * (6.5 + bonus) > pb * (double)sum;
     }
 

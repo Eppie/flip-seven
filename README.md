@@ -279,6 +279,21 @@ generic code is validated against the frozen 2-player path (`win_prob_greedy_n` 
 n=2 matches `win_prob_greedy` to <1e-9, and the n=2 best response reproduces
 `W_br(0,0)=0.5593`).
 
+### Flip 7: With a Vengeance (Monte-Carlo)
+
+The standalone sequel — full card list and rules in
+[`flip7_vengeance_rules.md`](flip7_vengeance_rules.md) — **can't** reuse the exact
+DP: **Lucky 13** lets a hand hold two `13`s (the unique-set state breaks) and
+**Steal / Swap / Discard / Unlucky 7** move cards between players (so "your hand
+determines the deck" breaks). So it's handled the way the repo handles every messy
+multiplayer case — a **faithful-rules Monte-Carlo** over a shuffled 108-card deck
+(`include/flip7_vengeance.hpp`, `make vengeance`). The hit/stay and take-that
+targeting are documented heuristics (Vengeance is unsolved), but the engine is
+unbiased: a **symmetric field gives each player 1/n** (the sanity check). With the
+extra take-that, an adversarial player who aims at the leader gains even more than in
+the original — **roughly +0.23 win probability vs a naive field and +0.12 vs a random
+field at a 2-player table**, diluting toward +0.18 / +0.06 by six players.
+
 ### Decision oracle (`decide`)
 
 `bin/decide` turns the analysis into an in-the-moment recommendation. You hand it

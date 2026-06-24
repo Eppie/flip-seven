@@ -34,6 +34,7 @@ NASH := $(BIN)/ch4_nash
 CH5  := $(BIN)/ch5_actions
 ALL  := $(BIN)/solitaire_all_cards
 DECIDE := $(BIN)/decide
+VENG := $(BIN)/vengeance
 PROF := $(BIN)/profile
 PROFB := $(BIN)/profile_blocked
 PROFBI:= $(BIN)/profile_blocked_instr
@@ -46,8 +47,9 @@ TST5 := $(BIN)/test_ch5
 TSTN := $(BIN)/test_neon
 TSTA := $(BIN)/test_all_cards
 TSTO := $(BIN)/test_oracle
+TSTV := $(BIN)/test_vengeance
 
-all: $(CH1) $(CH1B) $(CH2) $(CH3) $(CH4) $(NASH) $(CH5) $(ALL) $(DECIDE) $(PROF) $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5) $(TSTN) $(TSTA) $(TSTO)
+all: $(CH1) $(CH1B) $(CH2) $(CH3) $(CH4) $(NASH) $(CH5) $(ALL) $(DECIDE) $(VENG) $(PROF) $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5) $(TSTN) $(TSTA) $(TSTO) $(TSTV)
 	@echo "built with: $(CXX) $(MCPU)"
 
 $(BIN):
@@ -82,6 +84,13 @@ $(DECIDE): oracle/main.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 $(TSTO): tests/test_oracle.cpp $(HDRS) | $(BIN)
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+# vengeance: Monte-Carlo summary for Flip 7: With a Vengeance.
+$(VENG): vengeance/main.cpp $(HDRS) | $(BIN)
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+$(TSTV): tests/test_vengeance.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 # PMU profiler: vendored third_party/perf.h (Apple Silicon kperf, dlopen'd).
@@ -126,6 +135,7 @@ help:
 	@echo "  make competitive / nash / actions   Ch.4-5 (2-player)"
 	@echo "  make competitive-3p / -4p, nash-3p, actions-3p   N-player"
 	@echo "  make decide     build+run the decision oracle (see ./bin/decide --help)"
+	@echo "  make vengeance  Monte-Carlo summary for Flip 7: With a Vengeance"
 	@echo "  make all-cards  the full 94-card solitaire DP (heavy)"
 	@echo "  make profile    PMU profiling of the hot kernels (sudo for counters)"
 	@echo "  make clean"
@@ -157,6 +167,8 @@ test: $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5) $(TSTN) $(TSTO)
 	./$(TSTN)
 	@echo
 	./$(TSTO)
+	@echo
+	./$(TSTV)
 
 # Decision oracle CLI. Build it, then run e.g.:
 #   ./bin/decide --players 3 --my-hand 3,7,9 --my-total 110 \
@@ -164,6 +176,10 @@ test: $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5) $(TSTN) $(TSTO)
 # (n<=3 builds + caches the exact win grid to data/ on first use.)
 decide: $(DECIDE)
 	./$(DECIDE) --players 2 --my-hand 5,9,12 --my-total 150 --opp 168 --seen 11,12
+
+# Flip 7: With a Vengeance -- faithful-rules Monte-Carlo summary.
+vengeance: $(VENG)
+	./$(VENG)
 
 # Opt-in heavy solves (out of the fast loop).
 #   competitive: Ch.4 best-response grid (~9 s)
@@ -218,4 +234,4 @@ test-all-cards: $(TSTA)
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all help run test decide competitive competitive-3p competitive-4p nash nash-3p actions actions-3p profile profile-blocked all-cards test-all-cards clean
+.PHONY: all help run test decide vengeance competitive competitive-3p competitive-4p nash nash-3p actions actions-3p profile profile-blocked all-cards test-all-cards clean

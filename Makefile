@@ -33,6 +33,7 @@ CH4  := $(BIN)/ch4_competitive
 NASH := $(BIN)/ch4_nash
 CH5  := $(BIN)/ch5_actions
 ALL  := $(BIN)/solitaire_all_cards
+DECIDE := $(BIN)/decide
 PROF := $(BIN)/profile
 PROFB := $(BIN)/profile_blocked
 PROFBI:= $(BIN)/profile_blocked_instr
@@ -44,8 +45,9 @@ TST4 := $(BIN)/test_ch4
 TST5 := $(BIN)/test_ch5
 TSTN := $(BIN)/test_neon
 TSTA := $(BIN)/test_all_cards
+TSTO := $(BIN)/test_oracle
 
-all: $(CH1) $(CH1B) $(CH2) $(CH3) $(CH4) $(NASH) $(CH5) $(ALL) $(PROF) $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5) $(TSTN) $(TSTA)
+all: $(CH1) $(CH1B) $(CH2) $(CH3) $(CH4) $(NASH) $(CH5) $(ALL) $(DECIDE) $(PROF) $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5) $(TSTN) $(TSTA) $(TSTO)
 	@echo "built with: $(CXX) $(MCPU)"
 
 $(BIN):
@@ -73,6 +75,13 @@ $(CH5): ch5_actions/main.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 $(ALL): solitaire_all_cards/main.cpp $(HDRS) | $(BIN)
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+# decide: the interactive decision oracle CLI.
+$(DECIDE): oracle/main.cpp $(HDRS) | $(BIN)
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+$(TSTO): tests/test_oracle.cpp $(HDRS) | $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 # PMU profiler: vendored third_party/perf.h (Apple Silicon kperf, dlopen'd).
@@ -120,7 +129,7 @@ run: $(CH1) $(CH1B) $(CH2) $(CH3)
 	@echo
 	./$(CH3)
 
-test: $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5) $(TSTN)
+test: $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5) $(TSTN) $(TSTO)
 	./$(TST1)
 	@echo
 	./$(TST1B)
@@ -134,6 +143,15 @@ test: $(TST1) $(TST1B) $(TST2) $(TST3) $(TST4) $(TST5) $(TSTN)
 	./$(TST5)
 	@echo
 	./$(TSTN)
+	@echo
+	./$(TSTO)
+
+# Decision oracle CLI. Build it, then run e.g.:
+#   ./bin/decide --players 3 --my-hand 3,7,9 --my-total 110 \
+#                --opp 95:5,8 --opp 130:2,3,4 --seen 12,12 --have-freeze
+# (n<=3 builds + caches the exact win grid to data/ on first use.)
+decide: $(DECIDE)
+	./$(DECIDE) --players 2 --my-hand 5,9,12 --my-total 150 --opp 168 --seen 11,12
 
 # Opt-in heavy solves (out of the fast loop).
 #   competitive: Ch.4 best-response grid (~9 s)
@@ -188,4 +206,4 @@ test-all-cards: $(TSTA)
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all run test competitive competitive-3p competitive-4p nash nash-3p actions actions-3p profile profile-blocked all-cards test-all-cards clean
+.PHONY: all run test decide competitive competitive-3p competitive-4p nash nash-3p actions actions-3p profile profile-blocked all-cards test-all-cards clean

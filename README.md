@@ -279,6 +279,49 @@ generic code is validated against the frozen 2-player path (`win_prob_greedy_n` 
 n=2 matches `win_prob_greedy` to <1e-9, and the n=2 best response reproduces
 `W_br(0,0)=0.5593`).
 
+### Decision oracle (`decide`)
+
+`bin/decide` turns the analysis into an in-the-moment recommendation. You hand it
+the live situation — number of players, your hand, your match total, the opponents'
+totals (and hands, if you want targeting advice), the cards you've already seen, and
+whether you hold a Freeze / Flip Three — and it returns the **win-probability-optimal
+Hit/Stay** (plus the expected-score-optimal call for contrast), the **count-aware
+P(bust)** of hitting now, and whom to target.
+
+```
+./bin/decide --players 2 --my-hand 9,11,12 --my-total 120 --opp 168
+  WIN-OPTIMAL : STAY   (win prob  hit=0.1492  stay=0.1631)
+  count-aware P(bust) if you hit now = 0.3816   (fresh-deck 0.3816)
+
+# ...but if you've watched five 11s and six 12s go by, your bust cards are gone:
+./bin/decide --players 2 --my-hand 9,11,12 --my-total 120 --opp 168 \
+             --seen 11,11,11,11,11,12,12,12,12,12,12
+  WIN-OPTIMAL : HIT    (win prob  hit=0.1668  stay=0.1631)
+  count-aware P(bust) if you hit now = 0.2769   (fresh-deck 0.3816)
+```
+
+A single exact table over the full state (your hand × every opponent's hand × all
+totals × cards-seen × n) is impossible, so the oracle exploits the same factoring
+the rest of the project rests on. It composes three layers:
+
+1. a **win-value backbone** `winval(total)` = P(you win the match if you bank to this
+   total) — read from the exact best-response grid for **n≤3** (built once and cached
+   to `data/winbr_n*_t*.bin`; the n=3 grid takes a few minutes the first time),
+   Monte-Carlo for **n≥4**;
+2. a **count-aware within-round solve** from your current hand using the *actual*
+   remaining deck (your hand + every visible hand + `--seen` cards removed) — so
+   seeing your bust cards leave the shoe lowers P(bust) and can flip the call, exactly
+   as above;
+3. a **targeting** evaluation that scores aiming Freeze / Flip Three at each opponent
+   through the win grid (Freeze denies a deep-but-not-finished leader's upside; Flip
+   Three attacks a mid-deep hand).
+
+Honest bounds, also printed by the tool: it is a **one-step best response against a
+greedy field**, not the exact Nash of the full multiplayer game; the count-aware
+layer corrects the *current* round exactly while the multi-round continuation still
+assumes a fresh deck (the measured-small shoe effect); and card-counting is
+numbers-focused (which number cards are gone → bust risk).
+
 ## Build & run
 
 Requires a C++20 compiler (tested with Apple Clang on an Apple M4 Pro; the
@@ -407,3 +450,10 @@ win-probability DP is exact for up to 3 players (parallelized across cores) and
 Monte-Carlo beyond, with the symmetric value 1/n reproduced exactly at n=3 and
 every result cross-checked by an n-player tournament (see *Arbitrary number of
 players* above). The 2-player headline numbers are unchanged.
+
+Finally, `bin/decide` packages all of this into an **interactive decision oracle**:
+given a live situation (players, your hand/total, opponents' totals and hands, the
+cards seen so far, and any action card you hold) it returns the win-optimal Hit/Stay,
+a count-aware bust probability, and a targeting recommendation — composing the exact
+sub-results where they exist and Monte-Carlo where they don't (see *Decision oracle*
+above).

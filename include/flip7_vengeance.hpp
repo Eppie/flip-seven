@@ -131,7 +131,9 @@ struct VengeanceGame {
 #endif
 
     VengeanceGame(Xoshiro256pp& r, const std::vector<int>& tps)
-        : rng(r), n((int)tps.size()), tp(tps), P(tps.size()), total(tps.size(), 0) {}
+        : rng(r), n((int)tps.size()), tp(tps), P(tps.size()), total(tps.size(), 0) {
+        build_deck();   // built once; each round re-permutes lazily via partial Fisher-Yates
+    }
 
     // --- deck: 108 cards ---
     void build_deck() {
@@ -147,19 +149,24 @@ struct VengeanceGame {
         for (uint8_t m = VC_M2; m <= VC_DIV2; ++m) deck.push_back(m);          // one each (6)
         for (uint8_t a = VC_JUSTONE; a <= VC_DISCARD; ++a) { deck.push_back(a); deck.push_back(a); }  // x2 (10)
     }
-    void shuffle() {
-        build_deck();
-        for (int i = (int)deck.size() - 1; i > 0; --i) {
-            int j = (int)rng.bounded((uint64_t)(i + 1));
-            std::swap(deck[i], deck[j]);
-        }
+    // Start a fresh round. No upfront shuffle / rebuild: the deck array already holds
+    // all 108 cards (in some permutation from last round); we just rewind the cursor
+    // and reset the remaining-card tally. Cards are shuffled lazily as they're drawn.
+    void begin_round() {
         pos = 0;
         for (int v = 1; v <= 13; ++v) rem[v] = (v == 7) ? 6 : (v == 13) ? 12 : v;  // regular-number counts
     }
+    // Draw the next card via partial Fisher-Yates: swap the cursor with a uniformly
+    // random not-yet-drawn slot, then take it. O(1)/draw and only as many swaps as
+    // cards actually drawn -- a round touches ~8-20 of 108, so this is the win over a
+    // full 108-card shuffle every round (matches flip7_sim.hpp's shoe).
     int draw_card() {
         VINSTR(++ic_draws);
-        if (pos >= (int)deck.size()) return -1;
-        uint8_t c = deck[pos++];
+        const int sz = (int)deck.size();
+        if (pos >= sz) return -1;
+        const int j = pos + (int)rng.bounded((uint64_t)(sz - pos));
+        std::swap(deck[pos], deck[j]);
+        const uint8_t c = deck[pos++];
         if (c >= 1 && c <= 13) --rem[c];          // keep the remaining bust-card tally current
         return c;
     }
@@ -391,7 +398,7 @@ struct VengeanceGame {
 
     void play_round(int starter) {
         VINSTR(++ic_rounds);
-        shuffle();
+        begin_round();
         round_over = false;
         for (int i = 0; i < n; ++i) { P[i].reset(); }
         const int guard_max = 300 * n;

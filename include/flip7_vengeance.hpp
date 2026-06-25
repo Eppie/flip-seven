@@ -252,23 +252,25 @@ struct VengeanceGame {
     // the swap that does the most damage to the chooser's opponents (busts > score
     // loss), least self-harm. Returns false if no legal swap exists.
     void best_swap(int chooser) {
-        // collect (player, value) of every face-up regular-number card we can move
+        if (tp[chooser] == VTP_SELF) return;                  // naive: decline take-that swaps
+        // collect (player, value) of every face-up regular-number card we can move.
+        // Fixed stack buffer (face-up numbers <= 92); no per-call heap allocation.
         struct Slot { int p, v; };
-        std::vector<Slot> slots;
+        Slot slots[128]; int ns = 0;
         for (int p = 0; p < n; ++p) {
             if (P[p].status == VST_BUSTED) continue;
-            for (int v = 0; v <= 13; ++v) for (int k = 0; k < P[p].cnt[v]; ++k) slots.push_back({p, v});
+            for (int v = 0; v <= 13; ++v) for (int k = 0; k < P[p].cnt[v] && ns < 128; ++k) slots[ns++] = {p, v};
         }
-        if (tp[chooser] == VTP_SELF) return;                  // naive: decline take-that swaps
         if (tp[chooser] == VTP_RANDOM) {                      // symmetric: a random legal swap
-            std::vector<std::pair<int, int>> pairs;
-            for (size_t i = 0; i < slots.size(); ++i) for (size_t j = i + 1; j < slots.size(); ++j)
-                if (slots[i].p != slots[j].p) pairs.push_back({(int)i, (int)j});
-            if (pairs.empty()) return;
-            auto [i, j] = pairs[(int)rng.bounded((uint64_t)pairs.size())];
-            int pa = slots[i].p, va = slots[i].v, pb = slots[j].p, vb = slots[j].v;
-            P[pa].remove(va); P[pa].add(vb); P[pb].remove(vb); P[pb].add(va);
-            recheck_bust(pa); recheck_bust(pb);
+            if (ns < 2) return;
+            for (int t = 0; t < 64; ++t) {                    // rejection-sample two different-player slots
+                int i = (int)rng.bounded((uint64_t)ns), j = (int)rng.bounded((uint64_t)ns);
+                if (slots[i].p == slots[j].p) continue;
+                int pa = slots[i].p, va = slots[i].v, pb = slots[j].p, vb = slots[j].v;
+                P[pa].remove(va); P[pa].add(vb); P[pb].remove(vb); P[pb].add(va);
+                recheck_bust(pa); recheck_bust(pb);
+                return;
+            }
             return;
         }
         auto eval = [&](int pa, int va, int pb, int vb) -> double {
@@ -288,10 +290,10 @@ struct VengeanceGame {
             s += val(pb, P[pb], B);
             return s;
         };
-        VINSTR(ic_swap_evals += (long)(slots.size() * slots.size()));
+        VINSTR(ic_swap_evals += (long)((long)ns * ns));
         double best = 0.0; int bpa = -1, bva = 0, bpb = -1, bvb = 0; bool found = false;
-        for (size_t i = 0; i < slots.size(); ++i)
-            for (size_t j = 0; j < slots.size(); ++j) {
+        for (int i = 0; i < ns; ++i)
+            for (int j = 0; j < ns; ++j) {
                 if (slots[i].p == slots[j].p) continue;
                 double s = eval(slots[i].p, slots[i].v, slots[j].p, slots[j].v);
                 if (!found || s > best) { found = true; best = s; bpa = slots[i].p; bva = slots[i].v; bpb = slots[j].p; bvb = slots[j].v; }
@@ -305,8 +307,8 @@ struct VengeanceGame {
         if (tp[chooser] == VTP_SELF) return;                  // naive: decline
         int L = (tp[chooser] == VTP_ADVERSARIAL) ? leader_other(chooser) : -1;
         if (L < 0) {                                          // random: steal from a random opponent
-            std::vector<int> opp; for (int o = 0; o < n; ++o) if (o != chooser && P[o].status != VST_BUSTED && P[o].ncards() > 0) opp.push_back(o);
-            if (opp.empty()) return; L = opp[(int)rng.bounded((uint64_t)opp.size())];
+            int opp[64], m = 0; for (int o = 0; o < n; ++o) if (o != chooser && P[o].status != VST_BUSTED && P[o].ncards() > 0) opp[m++] = o;
+            if (m == 0) return; L = opp[(int)rng.bounded((uint64_t)m)];
         }
         int bestv = -1;
         for (int v = 13; v >= 0; --v) if (P[L].cnt[v] > 0 && P[chooser].cnt[v] + 1 <= P[chooser].allowed(v)) { bestv = v; break; }
@@ -323,8 +325,8 @@ struct VengeanceGame {
         if (tp[chooser] == VTP_SELF) return;                  // naive: decline (no self benefit)
         int L = (tp[chooser] == VTP_ADVERSARIAL) ? leader_other(chooser) : -1;
         if (L < 0) {
-            std::vector<int> opp; for (int o = 0; o < n; ++o) if (o != chooser && P[o].status != VST_BUSTED && P[o].ncards() > 0) opp.push_back(o);
-            if (opp.empty()) return; L = opp[(int)rng.bounded((uint64_t)opp.size())];
+            int opp[64], m = 0; for (int o = 0; o < n; ++o) if (o != chooser && P[o].status != VST_BUSTED && P[o].ncards() > 0) opp[m++] = o;
+            if (m == 0) return; L = opp[(int)rng.bounded((uint64_t)m)];
         }
         for (int v = 13; v >= 0; --v) if (P[L].cnt[v] > 0) { P[L].remove(v); if (v == 13 && P[L].cnt[13] == 0) P[L].lucky13 = false; return; }
     }
@@ -345,8 +347,8 @@ struct VengeanceGame {
                 int t;
                 if (tp[chooser] == VTP_SELF) t = chooser;
                 else if (tp[chooser] == VTP_RANDOM) {                   // random active player (incl self)
-                    std::vector<int> a; for (int o = 0; o < n; ++o) if (active(o)) a.push_back(o);
-                    t = a.empty() ? chooser : a[(int)rng.bounded((uint64_t)a.size())];
+                    int a[64], m = 0; for (int o = 0; o < n; ++o) if (active(o)) a[m++] = o;
+                    t = (m == 0) ? chooser : a[(int)rng.bounded((uint64_t)m)];
                 } else { t = leader_other(chooser); if (t < 0) t = chooser; }  // adversarial: cap the leader
                 forced_one_then_stay(t);
                 break;
@@ -358,8 +360,8 @@ struct VengeanceGame {
                     for (int o = 0; o < n; ++o) if (o != chooser && active(o) && (best < 0 || P[o].ncards() > P[best].ncards())) best = o;
                     if (best >= 0) t = best;
                 } else if (tp[chooser] == VTP_RANDOM) {
-                    std::vector<int> a; for (int o = 0; o < n; ++o) if (active(o)) a.push_back(o);
-                    if (!a.empty()) t = a[(int)rng.bounded((uint64_t)a.size())];
+                    int a[64], m = 0; for (int o = 0; o < n; ++o) if (active(o)) a[m++] = o;
+                    if (m > 0) t = a[(int)rng.bounded((uint64_t)m)];
                 }
                 forced_flip_four(t);
                 break;

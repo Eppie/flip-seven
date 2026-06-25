@@ -77,9 +77,14 @@ struct VPlayer {
     bool zero = false, lucky13 = false, unlucky7 = false;
     uint8_t modmask = 0;
     int status = VST_ACTIVE;
+    int nc = 0;              // running card count  == sum cnt[v]   (kept O(1))
+    int nsum = 0;            // running value sum   == sum v*cnt[v]
 
-    int ncards() const { int s = 0; for (int v = 0; v <= 13; ++v) s += cnt[v]; return s; }
-    int numsum() const { int s = 0; for (int v = 0; v <= 13; ++v) s += v * cnt[v]; return s; }
+    // All number-card mutations go through add/remove so nc/nsum stay current.
+    void add(int v)    { cnt[v]++; nc++; nsum += v; }
+    void remove(int v) { cnt[v]--; nc--; nsum -= v; }
+    int ncards() const { return nc; }
+    int numsum() const { return nsum; }
     int allowed(int v) const { return (v == 13 && lucky13) ? 2 : 1; }
     void reset() { *this = VPlayer{}; }
 };
@@ -184,19 +189,18 @@ struct VengeanceGame {
     // --- resolve a number/special-number card landing on player p ---
     void give_number(int p, uint8_t card) {
         VPlayer& q = P[p];
-        if (card == VC_ZERO) { if (q.cnt[0] == 0) { q.cnt[0] = 1; q.zero = true; } }
+        if (card == VC_ZERO) { if (q.cnt[0] == 0) { q.add(0); q.zero = true; } }
         else if (card == VC_UNLUCKY7) {                       // discard everything else, keep only this 7
-            uint8_t keepmod = 0; (void)keepmod;
             q.reset();                                         // clears numbers + modifiers + flags
-            q.cnt[7] = 1; q.unlucky7 = true;
+            q.add(7); q.unlucky7 = true;
         } else if (card == VC_LUCKY13) {
             q.lucky13 = true;
             if (q.cnt[13] + 1 > q.allowed(13)) { q.status = VST_BUSTED; return; }
-            q.cnt[13]++;
+            q.add(13);
         } else {                                              // regular number 1..13
             int v = card;
             if (q.cnt[v] + 1 > q.allowed(v)) { q.status = VST_BUSTED; VINSTR(++ic_busts); return; }
-            q.cnt[v]++;
+            q.add(v);
         }
         if (q.status != VST_BUSTED && q.ncards() == kFlip7Target) { q.status = VST_FLIP7; round_over = true; VINSTR(++ic_flip7); }
     }
@@ -263,7 +267,7 @@ struct VengeanceGame {
             if (pairs.empty()) return;
             auto [i, j] = pairs[(int)rng.bounded((uint64_t)pairs.size())];
             int pa = slots[i].p, va = slots[i].v, pb = slots[j].p, vb = slots[j].v;
-            P[pa].cnt[va]--; P[pa].cnt[vb]++; P[pb].cnt[vb]--; P[pb].cnt[va]++;
+            P[pa].remove(va); P[pa].add(vb); P[pb].remove(vb); P[pb].add(va);
             recheck_bust(pa); recheck_bust(pb);
             return;
         }
@@ -271,7 +275,7 @@ struct VengeanceGame {
             // simulate moving va from pa to pb and vb from pb to pa; score = damage to
             // opponents minus harm to chooser. Bust is worth a lot.
             VPlayer A = P[pa], B = P[pb];
-            A.cnt[va]--; A.cnt[vb]++; B.cnt[vb]--; B.cnt[va]++;
+            A.remove(va); A.add(vb); B.remove(vb); B.add(va);
             auto busts = [&](const VPlayer& q) { for (int v = 0; v <= 13; ++v) if (q.cnt[v] > q.allowed(v)) return true; return false; };
             auto val = [&](int who, const VPlayer& before, const VPlayer& after) {
                 bool bb = busts(after);
@@ -293,7 +297,7 @@ struct VengeanceGame {
                 if (!found || s > best) { found = true; best = s; bpa = slots[i].p; bva = slots[i].v; bpb = slots[j].p; bvb = slots[j].v; }
             }
         if (!found || best <= 0.0) return;                    // no profitable swap -> decline (no harmless-but-mandatory model)
-        P[bpa].cnt[bva]--; P[bpa].cnt[bvb]++; P[bpb].cnt[bvb]--; P[bpb].cnt[bva]++;
+        P[bpa].remove(bva); P[bpa].add(bvb); P[bpb].remove(bvb); P[bpb].add(bva);
         recheck_bust(bpa); recheck_bust(bpb);
     }
 
@@ -310,7 +314,7 @@ struct VengeanceGame {
             for (int v = 13; v >= 0; --v) if (P[L].cnt[v] > 0) { bestv = v; break; }
             if (bestv < 0) return;
         }
-        P[L].cnt[bestv]--; P[chooser].cnt[bestv]++;
+        P[L].remove(bestv); P[chooser].add(bestv);
         recheck_bust(chooser);
         if (P[chooser].status != VST_BUSTED && P[chooser].ncards() == kFlip7Target) { P[chooser].status = VST_FLIP7; round_over = true; }
     }
@@ -322,7 +326,7 @@ struct VengeanceGame {
             std::vector<int> opp; for (int o = 0; o < n; ++o) if (o != chooser && P[o].status != VST_BUSTED && P[o].ncards() > 0) opp.push_back(o);
             if (opp.empty()) return; L = opp[(int)rng.bounded((uint64_t)opp.size())];
         }
-        for (int v = 13; v >= 0; --v) if (P[L].cnt[v] > 0) { P[L].cnt[v]--; if (v == 13 && P[L].cnt[13] == 0) P[L].lucky13 = false; return; }
+        for (int v = 13; v >= 0; --v) if (P[L].cnt[v] > 0) { P[L].remove(v); if (v == 13 && P[L].cnt[13] == 0) P[L].lucky13 = false; return; }
     }
 
     // resolve any drawn card for player p; chooser assigns action cards.

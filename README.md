@@ -293,14 +293,15 @@ unbiased: a **symmetric field gives each player 1/n** (the sanity check). With t
 extra take-that, an adversarial player who aims at the leader gains even more than in
 the original — **roughly +0.23 win probability vs a naive field and +0.12 vs a random
 field at a 2-player table**, diluting toward +0.18 / +0.06 by six players. The engine
-runs at **~620 K games/s/core** (2-player); `make profile-vengeance` reports the
+runs at **~790 K games/s/core** (2-player); `make profile-vengeance` reports the
 per-game work breakdown (logical, no root) and the PMU counters (`sudo`, IPC / cache
-/ branch). Two profiling-driven wins (≈7× over the first version, MC-equivalent):
-the per-decision bust check no longer rescans the deck (incremental remaining-card
-tally), and rounds shuffle lazily via partial Fisher-Yates (one swap per *actual*
-draw — a round touches ~8–20 of 108 cards — instead of a full 108-card shuffle every
-round). It's then compute-bound at IPC ~3.5, limited by the branchy, serial game
-flow rather than memory.
+/ branch). Three profiling-driven wins (≈9× over the first version): the per-decision
+bust check no longer rescans the deck (incremental remaining-card tally); rounds
+shuffle lazily via partial Fisher-Yates (one swap per *actual* draw — a round touches
+~8–20 of 108 cards — instead of a full 108-card shuffle every round); and each
+player's card count and number-sum are maintained incrementally instead of recomputed
+by O(13) loops on every draw and decision. It's then compute-bound at IPC ~3.5,
+limited by the branchy, serial game flow rather than memory.
 
 ### Decision oracle (`decide`)
 

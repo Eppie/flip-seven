@@ -33,13 +33,13 @@ int main() {
 
     // 2. scoring order: numbers -> /2 (floor) -> negatives -> Flip7 +15 / Zero
     {
-        VPlayer p; p.cnt[4] = 1; p.cnt[8] = 1; p.cnt[11] = 1; p.status = VST_STAYED;  // sum 23
+        VPlayer p; p.add(4); p.add(8); p.add(11); p.status = VST_STAYED;  // sum 23
         check(vengeance_score(p) == 23, "plain sum {4,8,11} == 23");
         p.modmask |= (1u << MM_DIV2);
         check(vengeance_score(p) == 11, "/2 floors 23 -> 11");
         p.modmask |= (1u << MM_M4);
         check(vengeance_score(p) == 7, "then -4 -> 7 (divide before negatives)");
-        VPlayer z; z.cnt[0] = 1; z.zero = true; z.cnt[5] = 1; z.status = VST_STAYED;
+        VPlayer z; z.add(0); z.zero = true; z.add(5); z.status = VST_STAYED;
         check(vengeance_score(z) == 0, "The Zero forces 0 without Flip 7");
         z.status = VST_FLIP7;
         check(vengeance_score(z) == 5 + kFlip7Bonus, "Flip 7 lifts The Zero and adds +15");
